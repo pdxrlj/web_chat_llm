@@ -1,0 +1,89 @@
+app:
+  port: 8791
+  log_level: INFO
+  device: cpu  # cuda 或 cpu
+
+llm:
+  - name: ark
+    model: doubao-seed-1-6-flash-250828
+    model_provider: openai
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    api_key: 78a9653d-6dea-402d-b59f-822a5f1f6702
+
+  - name: nlchat
+    model: qwen3:14b
+    model_provider: ollama
+    base_url: http://8.153.82.167:11434
+    api_key: ""
+
+  - name: topic
+    model: doubao-seed-1-6-flash-250828
+    model_provider: openai
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    api_key: 78a9653d-6dea-402d-b59f-822a5f1f6702
+
+  - name: profile
+    model: doubao-seed-1-6-flash-250828
+    model_provider: openai
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    api_key: 78a9653d-6dea-402d-b59f-822a5f1f6702
+
+  - name: nlg # 奶龙成长报告模型
+    model: nl8:latest
+    model_provider: ollama
+    base_url: http://112.132.224.74:19931
+    api_key: sk-123456789
+
+  - name: nle
+    model: nle8:latest
+    model_provider: ollama
+    base_url: http://112.132.224.74:19931
+    api_key: sk-123456789
+
+  - name: nlp
+    model: nlp8:latest
+    model_provider: ollama
+    base_url: http://112.132.224.74:19931
+    api_key: sk-123456789
+
+  - name: qwen
+    model: qwen3.5-plus
+    model_provider: openai
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key: "sk-0c6357bf1aad4ad5a38a309e0e1af404"
+
+embedding:
+  - name: ollama
+    model: nomic-embed-text:latest
+    model_provider: ollama
+    base_url: http://112.132.224.74:19931
+    api_key: sk-123456789
+
+  - name: local_embedding
+    model: BAAI/bge-base-en-v1.5
+    model_provider: sentence_transformers
+
+  - name: reranker
+    model: BAAI/bge-reranker-v2-m3
+    model_provider: sentence_transformers
+
+storage:
+  - name: milvus
+    uri: http://8.153.82.167:19530
+    token: root:aibuddy@2025
+    db_name: web_chat
+    chat_record_collection_name_prefix: chat_record
+    user_profile_collection_name: user_profile
+
+  - name: postgres
+    host: 112.132.224.74
+    port: 35432
+    user: postgres
+    password: pg123
+    db_name: chat_web
+
+  - name: redis
+    host: 112.132.224.74
+    port: 6379
+    username: ""
+    password: ""

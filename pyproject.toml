@@ -1,0 +1,21 @@
+[project]
+name = "web-chat-new"
+version = "0.1.0"
+description = "AI Memory System with conflict detection"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.135.3",
+    "openai>=2.30.0",
+    "pymilvus>=2.6.11",
+    "pyyaml>=6.0.0",
+    "sentence-transformers>=5.3.0",
+    "sqlalchemy>=2.0.48",
+    "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.24.0",
+]

@@ -1,0 +1,4 @@
+{
+  "extraPaths": ["./typings"],
+  "typeCheckingMode": "standard"
+}
