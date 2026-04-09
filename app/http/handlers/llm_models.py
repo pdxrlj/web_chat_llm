@@ -2,11 +2,6 @@ from app.http.handlers.base import router
 from pydantic import BaseModel
 
 
-class ModelsResponse(BaseModel):
-    object: str = "list"
-    data: list[ModelInfo] = []
-
-
 class ModelInfo(BaseModel):
     id: str
     object: str = "model"
@@ -26,11 +21,16 @@ SUPPORTED_MODELS = [
         owned_by="奶龙成长报告",
     ),
     ModelInfo(
-        id="qwen",
+        id="qwen-flash",
         created=1677610602,
         owned_by="奶龙成长报告",
     ),
 ]
+
+
+class ModelsResponse(BaseModel):
+    object: str = "list"
+    data: list[ModelInfo] = []
 
 
 @router.get("/models", response_model=ModelsResponse)

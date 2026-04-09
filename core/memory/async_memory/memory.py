@@ -44,8 +44,8 @@ class AsyncMemory:
     @classmethod
     def from_config(
         cls,
-        llm_name: str = "qwen",
-        storage: BaseStorage = None,
+        llm_name: str = "memory",  # 修改默认LLM为memory配置
+        storage: Optional[BaseStorage] = None,
         conflict_resolution: ConflictResolution = ConflictResolution.MERGE,
         enable_conflict_detection: bool = True,
         similarity_threshold: float = 0.85,
@@ -76,7 +76,7 @@ class AsyncMemory:
         llm_config = app_config.get_llm(llm_name)
         if not llm_config:
             raise ValueError(f"未找到 LLM 配置: {llm_name}")
-        
+
         if storage is None:
             raise ValueError("storage 参数必填，必须提供 MilvusStorage 实例")
 
@@ -127,7 +127,7 @@ class AsyncMemory:
         openai_model: str = "gpt-4o-mini",
         embedding_model: str = "BAAI/bge-base-en-v1.5",
         reranker_model: str = "BAAI/bge-reranker-v2-m3",
-        storage: BaseStorage = None,
+        storage: Optional[BaseStorage] = None,
         conflict_resolution: ConflictResolution = ConflictResolution.MERGE,
         enable_conflict_detection: bool = True,
         similarity_threshold: float = 0.85,
@@ -198,6 +198,43 @@ class AsyncMemory:
             logger.info(f"CUDA 可用，检测到 GPU: {torch.cuda.get_device_name(0)}")
             logger.info(f"GPU 数量: {torch.cuda.device_count()}")
 
+    async def warm_up(
+        self, load_embedding: bool = True, load_reranker_model: bool = False
+    ):
+        """
+        预热模型，提前加载以避免首次调用时的延迟
+
+        Args:
+            load_embedding: 是否预加载 embedding 模型（默认 True）
+            load_reranker_model: 是否预加载 reranker 模型（默认 False）
+        """
+        import asyncio
+
+        tasks = []
+
+        if load_embedding and self._embedding_model_instance is None:
+            logger.info("预热 Embedding 模型...")
+            # 使用简单的测试文本触发模型加载
+            tasks.append(self._get_embedding("warm up"))
+
+        if load_reranker_model and self._reranker_model_instance is None:
+            logger.info("预热 Reranker 模型...")
+
+            # 创建一个假的搜索结果来触发 reranker 加载
+            async def trigger_reranker():
+                from .models import MemoryItem
+
+                fake_memory = MemoryItem(
+                    id="warm_up", content="warm up", user_id="system"
+                )
+                await self._rerank_results("warm up", [(fake_memory, 0.9)], top_k=1)
+
+            tasks.append(trigger_reranker())
+
+        if tasks:
+            await asyncio.gather(*tasks)
+            logger.info("模型预热完成")
+
     async def add(
         self,
         messages: List[Dict[str, str]],
@@ -206,6 +243,7 @@ class AsyncMemory:
         metadata: Optional[Dict[str, Any]] = None,
         infer: bool = True,
         auto_detect_conflict: bool = True,
+        flush_after: bool = False,  # 新增参数：是否在添加后立即flush
     ) -> Dict[str, Any]:
         """
         添加记忆
@@ -217,11 +255,19 @@ class AsyncMemory:
             metadata: 自定义元数据
             infer: 是否使用 LLM 提取记忆（False 则直接存储原始消息）
             auto_detect_conflict: 是否自动检测冲突
+            flush_after: 是否在添加后立即flush到磁盘，确保数据可见性（默认False，提高性能）
 
         Returns:
             添加结果，包含记忆 ID 和冲突信息
         """
+        import time
+
+        method_start_time = time.time()
+
+        logger.info(f"开始添加记忆，消息数: {len(messages)}, infer: {infer}")
+
         # 1. 提取记忆
+        extract_start = time.time()
         if infer:
             memory_items = await self._extract_memories(messages, user_id, session_id)
         else:
@@ -237,47 +283,144 @@ class AsyncMemory:
                 for msg in messages
                 if msg.get("content")
             ]
+        extract_time = time.time() - extract_start
+        logger.info(
+            f"提取记忆完成，耗时: {extract_time:.3f} 秒，记忆数: {len(memory_items)}"
+        )
 
         # 2. 为每个记忆生成嵌入
+        embed_start = time.time()
         for item in memory_items:
             item.embedding = await self._get_embedding(item.content)
+        embed_time = time.time() - embed_start
+        logger.info(f"生成嵌入完成，耗时: {embed_time:.3f} 秒")
 
         # 3. 检测和处理冲突
+        conflict_start = time.time()
         conflicts_detected = []
+        actually_added = 0  # 实际存储的记忆数
         for item in memory_items:
+            logger.info(f"处理记忆: {item.content[:50]}...")
+
+            # 检查 embedding 是否存在
+            if not item.embedding:
+                logger.warning(f"  记忆缺少 embedding，直接存储")
+                await self.storage.add(item)
+                actually_added += 1
+                continue
+
             if auto_detect_conflict and self.enable_conflict_detection:
-                conflict = await self._detect_conflict_for_new_memory(item, user_id)
+                # 搜索相似记忆
+                similar_memories = await self.storage.search_by_embedding(
+                    embedding=item.embedding,
+                    top_k=100,
+                    user_id=user_id,
+                )
 
-                if conflict:
-                    conflicts_detected.append(conflict.to_dict())
+                if similar_memories:
+                    # 打印相似记忆
+                    for mem, sim in similar_memories[:3]:
+                        logger.info(f"  相似记忆: {sim:.4f} - {mem.content[:40]}...")
 
-                    # 解决冲突
-                    resolved_memory = await self.conflict_resolver.resolve_conflict(
-                        conflict,
-                        self.conflict_resolution,
+                    # 让 LLM 评估如何处理
+                    from .conflict_resolver import MemoryAction
+
+                    action, merged_content, ids_to_delete = (
+                        await self.conflict_resolver.evaluate_memory(
+                            item, similar_memories
+                        )
                     )
 
-                    # 更新旧记忆状态
-                    if self.conflict_resolution in [
-                        ConflictResolution.REPLACE,
-                        ConflictResolution.MERGE,
-                    ]:
-                        await self.storage.update(conflict.old_memory)
+                    logger.info(f"  处理动作: {action.value}")
 
-                    # 存储解决后的记忆
-                    await self.storage.add(resolved_memory)
+                    if action == MemoryAction.MERGE and merged_content:
+                        # 合并：删除旧记忆，添加合并后的
+                        conflicts_detected.append(
+                            {"action": "merge", "content": merged_content}
+                        )
+
+                        # 删除需要删除的记忆
+                        if ids_to_delete:
+                            for mid in ids_to_delete:
+                                await self.storage.delete(mid)
+                                logger.info(f"  已删除记忆: {mid}")
+
+                        # 创建合并后的记忆
+                        merged_memory = MemoryItem(
+                            id=str(uuid.uuid4()),
+                            content=merged_content,
+                            memory_type=item.memory_type,
+                            user_id=user_id,
+                            session_id=session_id,
+                            embedding=item.embedding,  # 暂用新记忆的embedding
+                        )
+                        await self.storage.add(merged_memory)
+                        actually_added += 1
+                        logger.info(f"  已存储合并记忆: {merged_content[:50]}...")
+
+                    elif action == MemoryAction.REPLACE:
+                        # 替换：删除所有相似记忆，添加新记忆
+                        conflicts_detected.append({"action": "replace"})
+
+                        for mem, _ in similar_memories:
+                            await self.storage.delete(mem.id)
+                            logger.info(f"  已删除记忆: {mem.id}")
+
+                        await self.storage.add(item)
+                        actually_added += 1
+                        logger.info(f"  已存储新记忆: {item.content[:50]}...")
+
+                    elif action == MemoryAction.REJECT:
+                        # 拒绝：跳过新记忆
+                        conflicts_detected.append({"action": "reject"})
+                        logger.info(f"  拒绝新记忆（无新信息）")
+
+                    else:
+                        # APPEND：直接添加
+                        await self.storage.add(item)
+                        actually_added += 1
+                        logger.info(f"  直接存储新记忆")
                 else:
-                    # 无冲突，直接存储
+                    # 无相似记忆，直接添加
                     await self.storage.add(item)
+                    actually_added += 1
+                    logger.info(f"  无相似记忆，直接存储")
             else:
                 # 不检测冲突，直接存储
                 await self.storage.add(item)
+                actually_added += 1
+                logger.info(f"  跳过冲突检测，直接存储")
+        conflict_time = time.time() - conflict_start
+        logger.info(
+            f"冲突检测和存储完成，耗时: {conflict_time:.3f} 秒，冲突数: {len(conflicts_detected)}"
+        )
+
+        # 计算总耗时
+        method_total_time = time.time() - method_start_time
+
+        # 如果需要，在添加后立即flush
+        if flush_after:
+            flush_start = time.time()
+            await self.storage._connect()
+            await self.storage.flush()
+            flush_time = time.time() - flush_start
+            logger.info(f"手动flush完成，耗时: {flush_time:.3f} 秒")
+            conflict_time += flush_time  # 将flush时间包含在冲突处理时间内
+            method_total_time += flush_time  # 更新总耗时
+        logger.info(f"添加记忆完成，总耗时: {method_total_time:.3f} 秒")
 
         return {
             "status": "success",
-            "memories_added": len(memory_items),
+            "memories_extracted": len(memory_items),  # LLM 提取的记忆数
+            "memories_added": actually_added,  # 实际存储的记忆数
             "memory_ids": [m.id for m in memory_items],
             "conflicts_detected": conflicts_detected,
+            "timing": {
+                "extract": extract_time,
+                "embed": embed_time,
+                "conflict": conflict_time,
+                "total": method_total_time,
+            },
         }
 
     async def search(
@@ -299,22 +442,41 @@ class AsyncMemory:
         Returns:
             检索结果
         """
+        import time
+
+        method_start_time = time.time()
+
+        logger.info(
+            f"开始搜索记忆，查询: {query[:50]}..., top_k: {top_k}, use_reranker: {use_reranker}"
+        )
+
         # 1. 生成查询嵌入
+        embed_start = time.time()
         query_embedding = await self._get_embedding(query)
+        embed_time = time.time() - embed_start
+        logger.info(f"生成查询嵌入完成，耗时: {embed_time:.3f} 秒")
 
         # 2. 向量检索（取更多候选，用于 reranker 过滤）
+        search_start = time.time()
         candidate_count = top_k * 3 if use_reranker else top_k
         results = await self.storage.search_by_embedding(
             embedding=query_embedding,
             top_k=candidate_count,
             user_id=user_id,
         )
+        search_time = time.time() - search_start
+        logger.info(f"向量检索完成，耗时: {search_time:.3f} 秒，候选数: {len(results)}")
 
         # 3. 如果启用 reranker，进行重排序
+        rerank_time = 0.0
         if use_reranker:
+            rerank_start = time.time()
             results = await self._rerank_results(query, results, top_k)
+            rerank_time = time.time() - rerank_start
+            logger.info(f"结果重排序完成，耗时: {rerank_time:.3f} 秒")
 
         # 4. 格式化结果
+        format_start = time.time()
         memories = [
             {
                 "id": memory.id,
@@ -325,11 +487,24 @@ class AsyncMemory:
             }
             for memory, score in results[:top_k]
         ]
+        format_time = time.time() - format_start
+
+        method_total_time = time.time() - method_start_time
+        logger.info(
+            f"搜索完成，总耗时: {method_total_time:.3f} 秒，返回结果数: {len(memories)}"
+        )
 
         return {
             "query": query,
             "results": memories,
             "total": len(memories),
+            "timing": {
+                "embed": embed_time,
+                "search": search_time,
+                "rerank": rerank_time,
+                "format": format_time,
+                "total": method_total_time,
+            },
         }
 
     async def _rerank_results(
@@ -351,6 +526,7 @@ class AsyncMemory:
             self._reranker_model_instance = CrossEncoder(
                 self.reranker_model,
                 device=self.device,
+                cache_folder="./models",
             )
 
         # 准备候选文档
@@ -420,6 +596,8 @@ class AsyncMemory:
         Returns:
             整理结果
         """
+        from .conflict_resolver import MemoryAction
+
         memories = await self.storage.get_all(user_id=user_id, limit=500)
         conflicts_resolved = 0
         memories_deleted = 0
@@ -434,24 +612,38 @@ class AsyncMemory:
                 user_id=user_id,
             )
 
-            for other, similarity in similar:
-                if other.id == memory.id:
-                    continue
-                if similarity > self.similarity_threshold:
-                    conflict = await self.conflict_resolver.detect_conflict(
-                        other, memory, self.similarity_threshold,
-                    )
-                    if conflict:
-                        resolved = await self.conflict_resolver.resolve_conflict(
-                            conflict, self.conflict_resolution,
-                        )
-                        # 更新旧记忆
-                        await self.storage.update(conflict.old_memory)
-                        # 删除旧记忆，存入合并后的
-                        await self.storage.add(resolved)
-                        await self.storage.delete(conflict.new_memory.id)
-                        conflicts_resolved += 1
-                        break
+            # 过滤掉自己
+            similar = [(m, s) for m, s in similar if m.id != memory.id]
+
+            if similar:
+                action, merged_content, ids_to_delete = (
+                    await self.conflict_resolver.evaluate_memory(memory, similar)
+                )
+
+                if action == MemoryAction.MERGE and merged_content:
+                    # 删除需要删除的记忆
+                    if ids_to_delete:
+                        for mid in ids_to_delete:
+                            await self.storage.delete(mid)
+                            memories_deleted += 1
+
+                    # 更新当前记忆
+                    memory.content = merged_content
+                    await self.storage.update(memory)
+                    conflicts_resolved += 1
+
+                elif action == MemoryAction.REPLACE:
+                    # 删除相似记忆
+                    for m, _ in similar:
+                        await self.storage.delete(m.id)
+                        memories_deleted += 1
+                    conflicts_resolved += 1
+
+                elif action == MemoryAction.REJECT:
+                    # 删除当前记忆（重复）
+                    await self.storage.delete(memory.id)
+                    memories_deleted += 1
+                    conflicts_resolved += 1
 
         return {
             "status": "success",
@@ -485,12 +677,18 @@ class AsyncMemory:
     "memories": [
         {{
             "content": "记忆内容",
-            "type": "fact/event/context",
+            "type": "fact/preference/event/context",
             "entities": ["实体1", "实体2"],
             "keywords": ["关键词1", "关键词2"]
         }}
     ]
 }}
+
+类型说明：
+- fact: 事实信息（如：姓名、职业、年龄）
+- preference: 用户偏好（如：喜欢、不喜欢、习惯）
+- event: 发生的事件（如：搬家、换工作）
+- context: 对话背景（如：当前情境、环境信息）
 """
 
         try:
@@ -502,9 +700,9 @@ class AsyncMemory:
                 "response_format": {"type": "json_object"},
             }
 
-            # 添加 Qwen 的 extra_body 参数
-            if self.enable_thinking:
-                request_params["extra_body"] = {"enable_thinking": True}
+            request_params["extra_body"] = {
+                "enable_thinking": False
+            }  # 强制禁用思考模式
 
             response = await self.openai_client.chat.completions.create(
                 **request_params
@@ -514,7 +712,14 @@ class AsyncMemory:
 
             memories = []
             for item in result.get("memories", []):
-                memory_type = MemoryType(item.get("type", "fact"))
+                # 安全地解析记忆类型，如果无效则使用默认值FACT
+                memory_type_str = item.get("type", "fact")
+                try:
+                    memory_type = MemoryType(memory_type_str)
+                except ValueError:
+                    # 处理无效的记忆类型，使用默认值FACT
+                    logger.warning(f"无效的记忆类型: {memory_type_str}, 使用默认值FACT")
+                    memory_type = MemoryType.FACT
 
                 memory = MemoryItem(
                     id=str(uuid.uuid4()),
@@ -557,6 +762,7 @@ class AsyncMemory:
                 self._embedding_model_instance = SentenceTransformer(
                     self.embedding_model,
                     device=self.device,
+                    cache_folder="./models",
                 )
 
             # 生成向量
@@ -593,14 +799,29 @@ class AsyncMemory:
 
         # 检查每个相似记忆是否存在冲突
         for old_memory, similarity in similar_memories:
-            if similarity > self.similarity_threshold:
+            logger.info(
+                f"  检测相似记忆 - 相似度: {similarity:.4f}, 阈值: {self.similarity_threshold}, "
+                f"内容: {old_memory.content[:30]}..."
+            )
+            if similarity >= self.similarity_threshold:
                 conflict = await self.conflict_resolver.detect_conflict(
                     old_memory,
                     new_memory,
                     self.similarity_threshold,
+                    similarity_score=similarity,  # 传递相似度分数
                 )
 
                 if conflict:
+                    logger.info(
+                        f"  ✓ 需要处理 - 相似度: {similarity:.4f}, 类型: {conflict.conflict_type}"
+                    )
                     return conflict
+            else:
+                # 相似度不够，后续的记忆更不可能满足阈值
+                logger.info(
+                    f"  ✗ 相似度 {similarity:.4f} 低于阈值 {self.similarity_threshold}，停止检测"
+                )
+                break
 
+        logger.info(f"  未找到冲突（相似度都不足或 LLM 判断无冲突）")
         return None

@@ -2,13 +2,22 @@
 
 import json
 import logging
-from typing import Optional
+from enum import Enum
+from typing import Optional, List
 
 from openai import AsyncOpenAI
 
-from .models import ConflictInfo, ConflictResolution, MemoryItem
+from .models import ConflictInfo, MemoryItem
 
 logger = logging.getLogger(__name__)
+
+
+class MemoryAction(Enum):
+    """记忆处理动作"""
+    REJECT = "reject"      # 拒绝新记忆（无价值）
+    MERGE = "merge"        # 合并新旧记忆
+    REPLACE = "replace"    # 替换旧记忆
+    APPEND = "append"      # 直接添加新记忆
 
 
 class ConflictResolver:
@@ -26,38 +35,59 @@ class ConflictResolver:
         self.temperature = temperature
         self.enable_thinking = enable_thinking
 
-    async def detect_conflict(
+    async def evaluate_memory(
         self,
-        old_memory: MemoryItem,
         new_memory: MemoryItem,
-        _similarity_threshold: float = 0.85,
-    ) -> Optional[ConflictInfo]:
-        """检测两个记忆是否存在冲突"""
+        similar_memories: List[tuple],  # List[(MemoryItem, similarity)]
+    ) -> tuple[MemoryAction, Optional[str], Optional[List[str]]]:
+        """评估新记忆如何处理
 
-        # 相同实体但内容不同 = 潜在冲突
-        if old_memory.entities and new_memory.entities:
-            common_entities = set(old_memory.entities) & set(new_memory.entities)
-            if not common_entities:
-                return None
+        Args:
+            new_memory: 新记忆
+            similar_memories: 相似记忆列表 [(MemoryItem, similarity), ...]
 
-        # 使用 LLM 判断冲突类型
-        prompt = f"""分析以下两段记忆是否存在冲突，并判断冲突类型：
+        Returns:
+            (action, merged_content, ids_to_delete)
+            - action: 处理动作
+            - merged_content: 合并后的内容（MERGE时有效）
+            - ids_to_delete: 需要删除的记忆ID列表
+        """
+        if not similar_memories:
+            logger.info(f"    无相似记忆，直接添加")
+            return MemoryAction.APPEND, None, None
 
-旧记忆：{old_memory.content}
-新记忆：{new_memory.content}
+        # 构建 prompt
+        similar_list = "\n".join([
+            f"[{i+1}] (相似度:{sim:.4f}) {mem.content}"
+            for i, (mem, sim) in enumerate(similar_memories)
+        ])
 
-请回答 JSON 格式：
+        prompt = f"""你是一个记忆管理助手。请评估新记忆与已有相似记忆的关系。
+
+【新记忆】
+{new_memory.content}
+
+【已有相似记忆】
+{similar_list}
+
+请判断应该如何处理，返回 JSON 格式：
 {{
-    "has_conflict": true/false,
-    "conflict_type": "contradiction（矛盾）/ update（更新）/ duplicate（重复）/ none",
-    "reason": "原因说明",
-    "should_merge": true/false,
-    "merged_content": "合并后的内容（如果需要合并）"
+    "action": "merge/replace/append/reject",
+    "reason": "判断理由",
+    "merged_content": "合并后的内容（仅merge时需要）",
+    "delete_ids": ["需要删除的记忆编号，如1,2,3"]
 }}
+
+判断标准：
+- merge: 新旧记忆信息互补，合并后更完整
+- replace: 新记忆完全覆盖或更新旧记忆
+- append: 新记忆独立有价值，需要保留
+- reject: 新记忆无新信息，可以丢弃
+
+注意：编号对应【已有相似记忆】中的序号 [1], [2], [3] 等。
 """
 
         try:
-            # 构建请求参数
             request_params = {
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -65,114 +95,72 @@ class ConflictResolver:
                 "response_format": {"type": "json_object"},
             }
 
-            # 添加 Qwen 的 extra_body 参数
-            if self.enable_thinking:
-                request_params["extra_body"] = {"enable_thinking": True}
+            request_params["extra_body"] = {"enable_thinking": False}
 
             response = await self.client.chat.completions.create(**request_params)
-
             result = json.loads(response.choices[0].message.content)
 
-            if not result.get("has_conflict"):
-                return None
+            action_str = result.get("action", "append")
+            reason = result.get("reason", "")
+            merged_content = result.get("merged_content")
+            delete_indices = result.get("delete_ids", [])
 
-            conflict_type = result.get("conflict_type", "none")
-            if conflict_type == "none":
-                return None
+            logger.info(f"    LLM 判断: action={action_str}, reason={reason}")
 
+            # 解析动作
+            try:
+                action = MemoryAction(action_str)
+            except ValueError:
+                action = MemoryAction.APPEND
+
+            # 获取需要删除的记忆ID
+            ids_to_delete = []
+            for idx in delete_indices:
+                if isinstance(idx, int) and 1 <= idx <= len(similar_memories):
+                    ids_to_delete.append(similar_memories[idx - 1][0].id)
+
+            return action, merged_content, ids_to_delete if ids_to_delete else None
+
+        except Exception as e:
+            logger.error(f"LLM 评估失败: {e}")
+            return MemoryAction.APPEND, None, None
+
+    async def detect_conflict(
+        self,
+        old_memory: MemoryItem,
+        new_memory: MemoryItem,
+        _similarity_threshold: float = 0.6,
+        similarity_score: float = 0.0,
+    ) -> Optional[ConflictInfo]:
+        """检测两个记忆是否存在冲突或需要合并（兼容旧接口）"""
+
+        # 使用新的评估方法
+        action, _merged_content, _ids_to_delete = await self.evaluate_memory(
+            new_memory, [(old_memory, similarity_score)]
+        )
+
+        if action == MemoryAction.MERGE:
             return ConflictInfo(
                 old_memory=old_memory,
                 new_memory=new_memory,
-                conflict_type=conflict_type,
-                similarity_score=0.0,
+                conflict_type="update",
+                similarity_score=similarity_score,
+            )
+        elif action == MemoryAction.REPLACE:
+            return ConflictInfo(
+                old_memory=old_memory,
+                new_memory=new_memory,
+                conflict_type="contradiction",
+                similarity_score=similarity_score,
+            )
+        elif action == MemoryAction.REJECT:
+            # 标记为重复，让调用方跳过
+            return ConflictInfo(
+                old_memory=old_memory,
+                new_memory=new_memory,
+                conflict_type="duplicate",
+                similarity_score=similarity_score,
             )
 
-        except Exception as e:
-            logger.error(f"冲突检测失败: {e}")
-            return None
+        return None
 
-    async def resolve_conflict(
-        self,
-        conflict: ConflictInfo,
-        strategy: ConflictResolution = ConflictResolution.MERGE,
-    ) -> MemoryItem:
-        """解决冲突，返回最终记忆"""
-
-        if strategy == ConflictResolution.REPLACE:
-            # 直接替换
-            conflict.new_memory.version = conflict.old_memory.version + 1
-            conflict.new_memory.superseded_by = conflict.old_memory.id
-            return conflict.new_memory
-
-        elif strategy == ConflictResolution.KEEP_OLD:
-            # 保留旧记忆
-            return conflict.old_memory
-
-        elif strategy == ConflictResolution.KEEP_BOTH:
-            # 保留两者，标记为不同版本
-            conflict.new_memory.version = conflict.old_memory.version + 1
-            conflict.new_memory.metadata["parallel_version_of"] = conflict.old_memory.id
-            return conflict.new_memory
-
-        elif strategy == ConflictResolution.MERGE:
-            # 智能合并
-            merged_content = await self._merge_memories(conflict)
-
-            # 创建合并后的记忆
-            merged_memory = MemoryItem(
-                id=conflict.new_memory.id,  # 使用新记忆 ID
-                content=merged_content,
-                memory_type=conflict.old_memory.memory_type,
-                user_id=conflict.old_memory.user_id,
-                entities=list(
-                    set(conflict.old_memory.entities + conflict.new_memory.entities)
-                ),
-                keywords=list(
-                    set(conflict.old_memory.keywords + conflict.new_memory.keywords)
-                ),
-                version=conflict.old_memory.version + 1,
-                metadata={
-                    **conflict.old_memory.metadata,
-                    **conflict.new_memory.metadata,
-                    "merged_from": [conflict.old_memory.id],
-                },
-            )
-
-            return merged_memory
-
-    async def _merge_memories(self, conflict: ConflictInfo) -> str:
-        """使用 LLM 合并两个记忆"""
-
-        prompt = f"""合并以下两段记忆，保留所有有效信息，解决矛盾：
-
-旧记忆：{conflict.old_memory.content}
-新记忆：{conflict.new_memory.content}
-冲突类型：{conflict.conflict_type}
-
-要求：
-1. 如果是时间线更新（如用户偏好改变），保留最新信息
-2. 如果是矛盾信息，用"之前...现在..."的方式表述
-3. 如果是补充信息，合并为完整描述
-
-请直接返回合并后的内容（不要解释）："""
-
-        try:
-            # 构建请求参数
-            request_params = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": self.temperature,
-            }
-
-            # 添加 Qwen 的 extra_body 参数
-            if self.enable_thinking:
-                request_params["extra_body"] = {"enable_thinking": True}
-
-            response = await self.client.chat.completions.create(**request_params)
-
-            return response.choices[0].message.content.strip()
-
-        except Exception as e:
-            logger.error(f"合并记忆失败: {e}")
-            # 失败时返回新记忆
-            return conflict.new_memory.content

@@ -16,7 +16,8 @@ class ConflictResolution(Enum):
 
 class MemoryType(Enum):
     """记忆类型"""
-    FACT = "fact"  # 事实性记忆（如用户偏好）
+    FACT = "fact"  # 事实性记忆（如用户信息）
+    PREFERENCE = "preference"  # 偏好性记忆（如用户喜好）
     EVENT = "event"  # 事件性记忆（如发生了什么）
     CONTEXT = "context"  # 上下文记忆（如对话背景）
 

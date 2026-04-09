@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 class BaseStorage(ABC):
     """存储抽象基类"""
 
+    async def _connect(self):
+        """延迟连接到存储系统（子类实现）"""
+        pass
+
+    @abstractmethod
+    async def flush(self):
+        """刷新缓冲区，确保数据持久化"""
+        pass
+
     @abstractmethod
     async def add(self, memory: MemoryItem) -> bool:
         """添加记忆"""
@@ -142,6 +151,11 @@ class MilvusStorage(BaseStorage):
             # 确保 collection 已加载（query/search 需要）
             client.load_collection(self.collection_name)
 
+    async def flush(self):
+        """刷新缓冲区，确保数据持久化到存储"""
+        if self._client is not None:
+            self._client.flush(self.collection_name)
+
     async def add(self, memory: MemoryItem) -> bool:
         await self._connect()
 
@@ -164,8 +178,9 @@ class MilvusStorage(BaseStorage):
             collection_name=self.collection_name,
             data=[data],
         )
-        # flush 使数据可被 query 搜到
-        self._client.flush(self.collection_name)
+        # 移除每次插入都调用flush的操作，改为定期flush或批量操作
+        # 这样可以显著提高插入性能
+        # self._client.flush(self.collection_name)
 
         return True
 
@@ -209,11 +224,16 @@ class MilvusStorage(BaseStorage):
     ) -> List[tuple[MemoryItem, float]]:
         await self._connect()
 
+        # 移除搜索前的强制flush，提高搜索性能
+        # 数据会由Milvus自动异步flush到磁盘，保持最终一致性
+        # 如果需要强一致性，可以在插入后手动调用flush
+
         filter_expr = None
         if user_id:
             filter_expr = f'user_id == "{user_id}"'
 
         assert self._client is not None  # 类型断言
+        # 使用更高的nprobe值提高搜索召回率
         results = self._client.search(
             collection_name=self.collection_name,
             data=[embedding],
@@ -227,6 +247,7 @@ class MilvusStorage(BaseStorage):
                 "created_at",
                 "metadata",
             ],
+            search_params={"metric_type": "COSINE", "params": {"nprobe": 100}},
         )
 
         memories_with_scores = []
@@ -310,7 +331,11 @@ class MilvusStorage(BaseStorage):
         from .models import MemoryType
 
         memory_type_str = data.get("memory_type", "fact")
-        memory_type = MemoryType(memory_type_str) if isinstance(memory_type_str, str) else memory_type_str
+        memory_type = (
+            MemoryType(memory_type_str)
+            if isinstance(memory_type_str, str)
+            else memory_type_str
+        )
 
         return MemoryItem(
             id=data["id"],

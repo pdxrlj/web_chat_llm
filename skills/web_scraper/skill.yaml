@@ -1,0 +1,107 @@
+name: web_scraper
+description: 生产级 Web 页面抓取技能，提供网页内容抓取、文本提取、链接提取等功能
+version: 2.0.0
+tags:
+  - web
+  - scraper
+  - http
+  - production
+
+# 技能指导
+content: |
+  你可以使用 Web 抓取技能获取网页内容。
+  
+  核心功能：
+  - fetch_webpage: 抓取网页内容（自动重试、速率限制、超时控制）
+  - extract_text: 从 HTML 提取纯文本
+  - extract_links: 从 HTML 提取链接
+  
+  生产级特性：
+  ✅ 连接池管理和复用
+  ✅ 自动重试机制（3次，指数退避）
+  ✅ 速率限制（令牌桶算法，2 req/s）
+  ✅ 超时控制（60秒）
+  ✅ 代理支持（通过环境变量配置）
+  ✅ 内容大小限制（10MB）
+  ✅ URL 验证
+  ✅ 元数据提取
+  
+  环境变量配置：
+  - WEB_SCRAPER_CONNECT_TIMEOUT: 连接超时（秒）
+  - WEB_SCRAPER_READ_TIMEOUT: 读取超时（秒）
+  - WEB_SCRAPER_MAX_RETRIES: 最大重试次数
+  - WEB_SCRAPER_PROXY: 代理地址
+  - WEB_SCRAPER_REQUESTS_PER_SECOND: 每秒最大请求数
+  
+  使用注意事项：
+  - 遵守 robots.txt
+  - 不要过度请求
+  - 尊重网站服务条款
+  - 注意版权问题
+
+# 工具定义
+tools:
+  - name: fetch_webpage
+    description: 抓取网页内容，支持自动重试、速率限制、超时控制
+    module: web_scraper
+    function: fetch_webpage
+    parameters:
+      url:
+        type: string
+        description: 网页 URL（支持自动添加 https://）
+      timeout:
+        type: integer
+        description: 超时时间（秒），默认 60 秒
+        default: null
+      headers:
+        type: object
+        description: 自定义请求头
+        default: null
+      extract_metadata:
+        type: boolean
+        description: 是否提取元数据（标题、描述等）
+        default: true
+
+  - name: extract_text
+    description: 从 HTML 中提取纯文本，自动移除脚本、样式、注释
+    module: web_scraper
+    function: extract_text
+    parameters:
+      html:
+        type: string
+        description: HTML 内容
+      max_length:
+        type: integer
+        description: 最大文本长度
+        default: 10000
+      remove_scripts:
+        type: boolean
+        description: 是否移除脚本
+        default: true
+      remove_styles:
+        type: boolean
+        description: 是否移除样式
+        default: true
+
+  - name: extract_links
+    description: 从 HTML 中提取所有链接
+    module: web_scraper
+    function: extract_links
+    parameters:
+      html:
+        type: string
+        description: HTML 内容
+      base_url:
+        type: string
+        description: 基础 URL（用于解析相对链接）
+        default: null
+
+# 依赖项
+dependencies:
+  - aiohttp>=3.9.0
+  - beautifulsoup4>=4.12.0
+  - lxml>=4.9.0
+
+# 作者信息
+author: AI Assistant
+license: MIT

@@ -3,15 +3,23 @@ name = "web-chat-new"
 version = "0.1.0"
 description = "AI Memory System with conflict detection"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = "~=3.13"
 dependencies = [
+    "asyncpg>=0.31.0",
     "fastapi>=0.135.3",
+    "langchain>=1.2.15",
+    "langchain-experimental>=0.0.42",
+    "langchain-openai>=1.1.12",
+    "langgraph>=1.1.6",
     "openai>=2.30.0",
     "pymilvus>=2.6.11",
     "pyyaml>=6.0.0",
     "sentence-transformers>=5.3.0",
     "sqlalchemy>=2.0.48",
+    "torch>=2.10.0",
     "uvicorn>=0.30.0",
+    "aiohttp>=3.9.0",
+    "beautifulsoup4>=4.12.0",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +31,12 @@ dev = [
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu128"
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu131"
 
 [tool.setuptools.packages.find]
 include = ["core*", "app*"]
