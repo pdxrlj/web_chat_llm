@@ -34,16 +34,16 @@ llm:
     base_url: http://112.132.224.74:19931
     api_key: sk-123456789
 
-  - name: nle
-    model: nle8:latest
+  - name: emotion
+    model: NLEmotion
     model_provider: ollama
-    base_url: http://112.132.224.74:19931
+    base_url: http://112.132.224.74:18009/v1
     api_key: sk-123456789
 
   - name: nlp
     model: nlp8:latest
     model_provider: ollama
-    base_url: http://112.132.224.74:19931
+    base_url: http://112.132.224.74:18009/v1
     api_key: sk-123456789
 
   - name: chat
@@ -67,8 +67,9 @@ embedding:
     api_key: sk-123456789
 
   - name: local_embedding
-    model: BAAI/bge-base-en-v1.5
+    model: BAAI/bge-small-zh-v1.5
     model_provider: sentence_transformers
+    # 中文embedding模型，维度512
 
   - name: reranker
     model: BAAI/bge-reranker-v2-m3

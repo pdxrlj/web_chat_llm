@@ -4,11 +4,16 @@ from core.config import config
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool, BaseTool
 from langchain_openai import ChatOpenAI
-from langchain.agents import create_agent
+from langchain.agents import create_agent, AgentState
 from langgraph.checkpoint.memory import MemorySaver
+
+
 from pydantic import SecretStr
 from typing import Any, AsyncGenerator, Optional
+from typing_extensions import TypedDict
 from pathlib import Path
+
+from core.nl_chat.middlewares.emotion_speculate import EmotionSpeculateMiddleware
 from .middlewares import SummarizationMiddleware
 from .skill_loader import SkillLoader
 import asyncio
@@ -17,6 +22,12 @@ import json
 import uuid
 
 logger = setup_logger(__name__)
+
+
+class ChatAgentState(AgentState):
+    """自定义 Agent State，扩展 session_id 字段供中间件使用"""
+
+    session_id: str
 
 
 # 定义记忆搜索工具
@@ -79,11 +90,13 @@ class ChatAgent:
 
         # 添加 Skill 相关工具
         self.tools.extend(self._create_skill_tools())
-        
+
         # 打印注册的工具
         logger.info(f"📦 已注册工具: {[t.name for t in self.tools]}")
         for t in self.tools:
-            logger.debug(f"  - {t.name}: {t.description[:100] if len(t.description) > 100 else t.description}")
+            logger.debug(
+                f"  - {t.name}: {t.description[:100] if len(t.description) > 100 else t.description}"
+            )
 
         # Agent 实例缓存 (按 model 缓存)
         self._agents: dict[str, Any] = {}
@@ -145,9 +158,12 @@ class ChatAgent:
             keep_messages=self.summarization_keep_msgs,
         )
 
+        emotion_speculate_middleware = EmotionSpeculateMiddleware()
+
         # 创建 Skill 中间件（延迟初始化）
         if self._skill_middleware is None:
             from .middlewares.skill_middleware import SkillMiddleware
+
             self._skill_middleware = SkillMiddleware(self.skill_loader)
 
         # 创建 Agent
@@ -157,8 +173,10 @@ class ChatAgent:
             system_prompt="你是一个友善、自然的对话伙伴。在与用户交流时，像一个贴心的朋友一样自然地运用你对用户的了解。不要刻意提及'记忆'、'数据库'或'之前提到过'等术语，就像普通人聊天一样随意自然。用简洁、真诚的方式回应。",
             middleware=[
                 summarization_middleware,
+                emotion_speculate_middleware,
                 self._skill_middleware,  # 注入技能列表
             ],
+            state_schema=ChatAgentState,  # 自定义 state schema，包含 session_id
             checkpointer=self._checkpointer,
         )
 
@@ -170,7 +188,7 @@ class ChatAgent:
 
     def _create_skill_tools(self) -> list[BaseTool]:
         """创建 Skill 相关工具"""
-        
+
         @tool
         def list_skills() -> str:
             """列出所有可用的技能。
@@ -179,10 +197,10 @@ class ChatAgent:
             使用 load_skill 加载技能指导，使用 invoke_skill_tool 调用技能工具。
             """
             skills = self.skill_loader.list_skills()
-            
+
             if not skills:
                 return "当前没有可用的技能"
-            
+
             result_lines = ["可用技能列表：\n"]
             for skill in skills:
                 tags_str = ", ".join(skill.get("tags", []))
@@ -192,13 +210,13 @@ class ChatAgent:
                     f"  版本: {skill.get('version', 'N/A')} | 标签: {tags_str}\n"
                     f"  类型: {has_tools}"
                 )
-            
+
             result_lines.append(
                 "\n使用方式:\n"
                 "- load_skill: 加载技能指导内容\n"
                 "- invoke_skill_tool: 调用技能工具"
             )
-            
+
             return "\n".join(result_lines)
 
         @tool
@@ -215,20 +233,19 @@ class ChatAgent:
                 技能的详细指导内容
             """
             content = self.skill_loader.load_skill(skill_name)
-            
+
             if content is None:
-                available = [
-                    s['name'] for s in self.skill_loader.list_skills()
-                ]
+                available = [s["name"] for s in self.skill_loader.list_skills()]
                 return (
-                    f"未找到技能 '{skill_name}'。\n"
-                    f"可用技能: {', '.join(available)}"
+                    f"未找到技能 '{skill_name}'。\n" f"可用技能: {', '.join(available)}"
                 )
-            
+
             return f"已加载技能: {skill_name}\n\n{content}"
 
         @tool
-        async def invoke_skill_tool(skill_name: str, tool_name: str, parameters: str) -> str:
+        async def invoke_skill_tool(
+            skill_name: str, tool_name: str, parameters: str
+        ) -> str:
             """调用技能中的工具。
 
             当需要执行具体操作时，使用此工具调用技能提供的可执行工具。
@@ -248,35 +265,39 @@ class ChatAgent:
                     parameters='{"expression": "1+3"}'
                 )
             """
-            logger.info(f"🔧 调用技能工具: {skill_name}.{tool_name}, 参数: {parameters}")
-            
+            logger.info(
+                f"🔧 调用技能工具: {skill_name}.{tool_name}, 参数: {parameters}"
+            )
+
             # 解析参数 JSON
             try:
                 kwargs = json.loads(parameters) if parameters else {}
             except json.JSONDecodeError as e:
                 logger.error(f"参数 JSON 解析失败: {e}")
                 return f"参数格式错误，必须是有效的 JSON 字符串: {str(e)}"
-            
+
             # 加载技能工具
             tools = self.skill_loader.load_skill_tools(skill_name)
-            
+
             if not tools:
                 # 检查技能是否存在
                 if skill_name not in self.skill_loader:
-                    available = [s['name'] for s in self.skill_loader.list_skills()]
+                    available = [s["name"] for s in self.skill_loader.list_skills()]
                     logger.warning(f"技能 '{skill_name}' 不存在")
-                    return f"技能 '{skill_name}' 不存在。可用技能: {', '.join(available)}"
-                
+                    return (
+                        f"技能 '{skill_name}' 不存在。可用技能: {', '.join(available)}"
+                    )
+
                 logger.warning(f"技能 '{skill_name}' 不包含可执行工具")
                 return f"技能 '{skill_name}' 不包含可执行工具"
-            
+
             # 查找指定工具
             target_tool = None
             for t in tools:
                 if t.name == tool_name:
                     target_tool = t
                     break
-            
+
             if not target_tool:
                 available_tools = [t.name for t in tools]
                 logger.warning(f"工具 '{tool_name}' 不存在于技能 '{skill_name}' 中")
@@ -284,23 +305,23 @@ class ChatAgent:
                     f"工具 '{tool_name}' 不存在于技能 '{skill_name}' 中。\n"
                     f"可用工具: {', '.join(available_tools)}"
                 )
-            
+
             # 执行工具
             try:
                 logger.info(f"⚙️ 开始执行工具: {target_tool.name}, 参数: {kwargs}")
                 # 使用 ainvoke 支持异步工具
                 result = await target_tool.ainvoke(kwargs)
-                
+
                 # 确保 result 是字符串
                 if isinstance(result, str):
                     result_str = result
                 else:
                     result_str = str(result)
-                
+
                 # 打印日志
                 preview = result_str[:100] if len(result_str) > 100 else result_str
                 logger.info(f"✅ 工具执行成功: {preview}")
-                
+
                 return f"执行结果:\n{result_str}"
             except Exception as e:
                 logger.error(f"❌ 工具执行失败: {str(e)}", exc_info=True)
@@ -403,8 +424,11 @@ class ChatAgent:
         full_response_content = ""
 
         # 使用 astream_events 进行流式输出
+        # 在输入中添加 session_id，以便 middleware 可以访问
         async for event in agent.astream_events(
-            {"messages": messages}, config=config_dict, version="v2"
+            {"messages": messages, "session_id": session_id},
+            config=config_dict,
+            version="v2",
         ):
             kind = event.get("event")
 

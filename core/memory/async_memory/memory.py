@@ -48,7 +48,7 @@ class AsyncMemory:
         storage: Optional[BaseStorage] = None,
         conflict_resolution: ConflictResolution = ConflictResolution.MERGE,
         enable_conflict_detection: bool = True,
-        similarity_threshold: float = 0.85,
+        similarity_threshold: float = 0.7,
         enable_thinking: bool = False,
         embedding_model: Optional[str] = None,
         reranker_model: Optional[str] = None,
@@ -130,7 +130,7 @@ class AsyncMemory:
         storage: Optional[BaseStorage] = None,
         conflict_resolution: ConflictResolution = ConflictResolution.MERGE,
         enable_conflict_detection: bool = True,
-        similarity_threshold: float = 0.85,
+        similarity_threshold: float = 0.7,
         enable_thinking: bool = False,
         device: str = "cuda",
     ):
@@ -310,81 +310,88 @@ class AsyncMemory:
                 continue
 
             if auto_detect_conflict and self.enable_conflict_detection:
-                # 搜索相似记忆
+                # 搜索相关记忆（取top_k条，用宽松阈值初筛）
                 similar_memories = await self.storage.search_by_embedding(
                     embedding=item.embedding,
-                    top_k=100,
+                    top_k=10,
                     user_id=user_id,
                 )
 
-                if similar_memories:
-                    # 打印相似记忆
-                    for mem, sim in similar_memories[:3]:
-                        logger.info(f"  相似记忆: {sim:.4f} - {mem.content[:40]}...")
-
-                    # 让 LLM 评估如何处理
-                    from .conflict_resolver import MemoryAction
-
-                    action, merged_content, ids_to_delete = (
-                        await self.conflict_resolver.evaluate_memory(
-                            item, similar_memories
-                        )
+                logger.info(f"  搜索到 {len(similar_memories)} 条候选记忆")
+                for mem, sim in similar_memories[:8]:
+                    logger.info(
+                        f"    候选: sim={sim:.4f}, content='{mem.content[:40]}', "
+                        f"type={mem.memory_type.value}"
                     )
 
-                    logger.info(f"  处理动作: {action.value}")
+                # 简化策略：只要有候选记忆，就全部交给 LLM 判断
+                # 去掉复杂的向量阈值/实体匹配/字符重叠等预筛选
+                # LLM 本身就能理解语义关系，不需要规则预判
+                if not similar_memories:
+                    logger.info(f"  无任何相关记忆，直接添加")
+                    await self.storage.add(item)
+                    actually_added += 1
+                    continue
 
-                    if action == MemoryAction.MERGE and merged_content:
-                        # 合并：删除旧记忆，添加合并后的
-                        conflicts_detected.append(
-                            {"action": "merge", "content": merged_content}
-                        )
+                logger.info(f"  将 {len(similar_memories)} 条候选交由 LLM 分析...")
 
-                        # 删除需要删除的记忆
-                        if ids_to_delete:
-                            for mid in ids_to_delete:
-                                await self.storage.delete(mid)
-                                logger.info(f"  已删除记忆: {mid}")
+                # 让 LLM 综合分析，决定操作类型（新增/修改/合并/删除/跳过）
+                from .conflict_resolver import MemoryAction
 
-                        # 创建合并后的记忆
-                        merged_memory = MemoryItem(
-                            id=str(uuid.uuid4()),
-                            content=merged_content,
-                            memory_type=item.memory_type,
-                            user_id=user_id,
-                            session_id=session_id,
-                            embedding=item.embedding,  # 暂用新记忆的embedding
-                        )
-                        await self.storage.add(merged_memory)
-                        actually_added += 1
-                        logger.info(f"  已存储合并记忆: {merged_content[:50]}...")
+                action, merged_content, ids_to_delete = (
+                    await self.conflict_resolver.evaluate_memory(item, similar_memories)
+                )
 
-                    elif action == MemoryAction.REPLACE:
-                        # 替换：删除所有相似记忆，添加新记忆
-                        conflicts_detected.append({"action": "replace"})
+                logger.info(f"  LLM 处理动作: {action.value}")
 
+                if action == MemoryAction.MERGE and merged_content:
+                    # 合并：删除旧记忆，添加合并后的
+                    conflicts_detected.append(
+                        {"action": "merge", "content": merged_content}
+                    )
+                    if ids_to_delete:
+                        for mid in ids_to_delete:
+                            await self.storage.delete(mid)
+                            logger.info(f"  已删除记忆: {mid}")
+
+                    merged_memory = MemoryItem(
+                        id=str(uuid.uuid4()),
+                        content=merged_content,
+                        memory_type=item.memory_type,
+                        user_id=user_id,
+                        session_id=session_id,
+                        embedding=item.embedding,
+                    )
+                    await self.storage.add(merged_memory)
+                    actually_added += 1
+                    logger.info(f"  已存储合并记忆: {merged_content[:50]}...")
+
+                elif action == MemoryAction.REPLACE:
+                    # 替换：删除指定的旧记忆，添加新记忆
+                    conflicts_detected.append({"action": "replace"})
+                    if ids_to_delete:
+                        for mid in ids_to_delete:
+                            await self.storage.delete(mid)
+                            logger.info(f"  已删除记忆: {mid}")
+                    else:
                         for mem, _ in similar_memories:
                             await self.storage.delete(mem.id)
                             logger.info(f"  已删除记忆: {mem.id}")
 
-                        await self.storage.add(item)
-                        actually_added += 1
-                        logger.info(f"  已存储新记忆: {item.content[:50]}...")
-
-                    elif action == MemoryAction.REJECT:
-                        # 拒绝：跳过新记忆
-                        conflicts_detected.append({"action": "reject"})
-                        logger.info(f"  拒绝新记忆（无新信息）")
-
-                    else:
-                        # APPEND：直接添加
-                        await self.storage.add(item)
-                        actually_added += 1
-                        logger.info(f"  直接存储新记忆")
-                else:
-                    # 无相似记忆，直接添加
                     await self.storage.add(item)
                     actually_added += 1
-                    logger.info(f"  无相似记忆，直接存储")
+                    logger.info(f"  已存储新记忆: {item.content[:50]}...")
+
+                elif action == MemoryAction.REJECT:
+                    # 拒绝：跳过新记忆
+                    conflicts_detected.append({"action": "reject"})
+                    logger.info(f"  拒绝新记忆（无新信息）")
+
+                else:
+                    # APPEND：直接添加
+                    await self.storage.add(item)
+                    actually_added += 1
+                    logger.info(f"  直接存储新记忆")
             else:
                 # 不检测冲突，直接存储
                 await self.storage.add(item)
@@ -662,21 +669,29 @@ class AsyncMemory:
     ) -> List[MemoryItem]:
         """使用 LLM 从对话中提取记忆"""
 
-        prompt = f"""从以下对话中提取重要的记忆事实。
+        prompt = f"""从以下对话中提取关于用户的重要记忆事实。
 
 对话：
 {json.dumps(messages, ensure_ascii=False, indent=2)}
 
-要求：
-1. 提取用户偏好、重要事件、关键信息
-2. 每条记忆应该简洁明确
-3. 过滤掉无关紧要的寒暄和礼貌用语
+**重要说明**：
+1. 只从 role="user" 的消息中提取用户的偏好、事实、事件
+2. role="assistant" 的回复只是对话上下文，**不要**将其内容或风格当作用户的偏好
+3. 如果用户在回复中确认了某些信息（如"是的"、"对的"），可以提取该信息
+4. 过滤掉无关紧要的寒暄和礼貌用语
+
+提取要求：
+1. 提取用户偏好、重要事件、关键事实信息
+2. 每条记忆应该简洁明确，**不要添加任何前缀、标签或元数据**
+3. 确保提取的是用户的信息，而不是助手的表现或风格
+4. **content 字段只包含简洁的事实陈述，不要包含"标签:"等额外信息**
+5. **【关键】必须保留情感和态度词汇！对于偏好类记忆（preference），content 中必须包含"喜欢/不喜欢/爱/讨厌/想/不想"等情感词**
 
 请返回 JSON 格式：
 {{
     "memories": [
         {{
-            "content": "记忆内容",
+            "content": "简洁的记忆内容（保留原始态度词：喜欢/不喜欢/爱/讨厌等）",
             "type": "fact/preference/event/context",
             "entities": ["实体1", "实体2"],
             "keywords": ["关键词1", "关键词2"]
@@ -686,9 +701,54 @@ class AsyncMemory:
 
 类型说明：
 - fact: 事实信息（如：姓名、职业、年龄）
-- preference: 用户偏好（如：喜欢、不喜欢、习惯）
+- preference: 用户偏好（如：喜欢、不喜欢、习惯）— **必须包含情感方向词**
 - event: 发生的事件（如：搬家、换工作）
 - context: 对话背景（如：当前情境、环境信息）
+
+**正确示例**：
+对话：
+[
+  {{"role": "user", "content": "我不喜欢颜文字"}},
+  {{"role": "assistant", "content": "嘿嘿～好的！"}}
+]
+提取结果：
+{{
+    "content": "不喜欢颜文字",
+    "type": "preference",
+    "entities": ["颜文字"],
+    "keywords": ["不喜欢", "颜文字"]
+}}
+
+**错误示例**（避免以下问题）：
+{{"content": "用户不喜欢颜文字", ...}}  （不要加"用户"前缀）
+{{"content": "不喜欢颜文字, 标签: 不喜欢", ...}}  （不要在 content 中包含标签信息）
+{{"content": "用户喜欢颜文字和表情", ...}}  （这是助手的表现，不是用户的偏好）
+{{"content": "每天吃苹果", ...}}  （丢失了"喜欢"这个关键情感词！）
+
+**更多示例**：
+
+对话：[{{"role": "user", "content": "我喜欢吃苹果"}}]
+提取：{{"content": "喜欢吃苹果", "type": "preference", "entities": ["苹果"], "keywords": ["喜欢", "苹果"]}}
+（注意：保留了"喜欢"，不能只写"吃苹果"或"每天吃苹果"）
+
+对话：[{{"role": "user", "content": "我很喜欢吃苹果，每天都要吃一个"}}]
+提取：{{"content": "很喜欢吃苹果，每天都吃一个", "type": "preference", "entities": ["苹果"], "keywords": ["很", "喜欢", "吃", "苹果"]}}
+（注意："很"+"喜欢"是情感强度+方向，必须保留！不能简化为"每天吃一个苹果"）
+
+对话：[{{"role": "user", "content": "其实我最近不喜欢吃苹果了，感觉太甜了"}}]
+提取：{{"content": "最近不喜欢吃苹果，感觉太甜", "type": "preference", "entities": ["苹果"], "keywords": ["不喜欢", "苹果", "太甜"]}}
+（注意：保留了"不喜欢"+原因"太甜"）
+
+对话：[{{"role": "user", "content": "我住在上海"}}]
+提取：{{"content": "住在上海", "type": "fact", "entities": ["上海"], "keywords": ["住", "上海"]}}
+
+对话：[{{"role": "user", "content": "我最近搬家了"}}]
+提取：{{"content": "最近搬家了", "type": "event", "entities": [], "keywords": ["搬家"]}}
+
+**【最高优先级规则】**：
+- 当用户表达喜好/厌恶时，content 必须包含"喜欢/不爱/讨厌/想/不想"等词
+- 这些情感词是后续冲突检测的基础，绝对不能省略
+- 宁可 content 稍长一些，也不能丢失情感方向信息
 """
 
         try:
@@ -721,9 +781,25 @@ class AsyncMemory:
                     logger.warning(f"无效的记忆类型: {memory_type_str}, 使用默认值FACT")
                     memory_type = MemoryType.FACT
 
+                # 清理和规范化 content
+                content = item["content"].strip()
+
+                # 移除可能的"用户"前缀（如果 LLM 仍然添加了）
+                if content.startswith("用户"):
+                    content = content[2:].strip()
+
+                # 移除可能的标签信息（如果 LLM 混入了）
+                if ", 标签:" in content or "，标签：" in content:
+                    content = content.split(", 标签:")[0].split("，标签：")[0].strip()
+
+                # 确保 content 不为空
+                if not content:
+                    logger.warning(f"提取的记忆内容为空，跳过")
+                    continue
+
                 memory = MemoryItem(
                     id=str(uuid.uuid4()),
-                    content=item["content"],
+                    content=content,
                     memory_type=memory_type,
                     user_id=user_id,
                     session_id=session_id,
@@ -732,6 +808,7 @@ class AsyncMemory:
                 )
                 memories.append(memory)
 
+            logger.info(f"成功提取 {len(memories)} 条记忆")
             return memories
 
         except Exception as e:
@@ -763,6 +840,9 @@ class AsyncMemory:
                     self.embedding_model,
                     device=self.device,
                     cache_folder="./models",
+                    # 禁用远程检查和更新
+                    use_auth_token=False,
+                    trust_remote_code=False,
                 )
 
             # 生成向量
@@ -779,6 +859,51 @@ class AsyncMemory:
         except Exception as e:
             logger.error(f"获取嵌入失败: {e}")
             raise RuntimeError(f"获取嵌入失败: {e}")
+
+    def _is_potential_conflict(
+        self, new_item: MemoryItem, existing: MemoryItem
+    ) -> bool:
+        """
+        判断两条记忆是否可能是潜在冲突（基于实体和类型匹配）
+
+        即使向量相似度不高，只要实体重叠+类型相同，就可能是冲突
+        例如： "很喜欢吃苹果" vs "不喜欢吃苹果" — 实体都是[苹果]，类型都是preference
+
+        Args:
+            new_item: 新记忆
+            existing: 已有记忆
+
+        Returns:
+            是否可能是潜在冲突
+        """
+        # 类型必须相同（preference vs preference, fact vs fact）
+        if new_item.memory_type != existing.memory_type:
+            return False
+
+        # 至少有一个共同实体或关键词
+        new_tags = set(new_item.entities) | set(new_item.keywords)
+        existing_tags = set(existing.entities) | set(existing.keywords)
+
+        if new_tags and existing_tags:
+            overlap = new_tags & existing_tags
+            if len(overlap) > 0:
+                return True
+
+        # 兜底：使用字符级中文重叠检测
+        # 原因：旧记录从 Milvus 读取时 entities/keywords 为空，
+        # 且整句中文无空格分隔，正则 \w+ 会把整句当做一个"词"
+        import re as _re
+
+        new_chars = set(_re.findall(r"[\u4e00-\u9fff]", new_item.content))
+        existing_chars = set(_re.findall(r"[\u4e00-\u9fff]", existing.content))
+
+        if new_chars and existing_chars:
+            overlap_chars = new_chars & existing_chars
+            # 至少共享3个汉字才算相关主题
+            # 例如："喜欢吃苹果"(4字) vs "不喜欢吃苹果"(5字) → 共享"吃苹果"(3字)
+            return len(overlap_chars) >= 3
+
+        return False
 
     async def _detect_conflict_for_new_memory(
         self,

@@ -20,6 +20,7 @@ dependencies = [
     "uvicorn>=0.30.0",
     "aiohttp>=3.9.0",
     "beautifulsoup4>=4.12.0",
+    "blinker>=1.9.0",
 ]
 
 [project.optional-dependencies]

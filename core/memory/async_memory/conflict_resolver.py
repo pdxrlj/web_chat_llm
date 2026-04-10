@@ -1,27 +1,26 @@
-"""冲突解决器"""
+"""记忆冲突解决器 - 基于 IntelligentDataProcessor"""
 
-import json
 import logging
-from enum import Enum
 from typing import Optional, List
 
 from openai import AsyncOpenAI
 
 from .models import ConflictInfo, MemoryItem
+from ..data_processor import IntelligentDataProcessor, DataRecord, ProcessingAction
 
 logger = logging.getLogger(__name__)
 
 
-class MemoryAction(Enum):
-    """记忆处理动作"""
-    REJECT = "reject"      # 拒绝新记忆（无价值）
-    MERGE = "merge"        # 合并新旧记忆
-    REPLACE = "replace"    # 替换旧记忆
-    APPEND = "append"      # 直接添加新记忆
+class MemoryAction:
+    """记忆处理动作（映射到 ProcessingAction）"""
+    REJECT = ProcessingAction.SKIP      # 拒绝新记忆（无价值）
+    MERGE = ProcessingAction.MERGE      # 合并新旧记忆
+    REPLACE = ProcessingAction.DELETE   # 替换旧记忆
+    APPEND = ProcessingAction.CREATE    # 直接添加新记忆
 
 
 class ConflictResolver:
-    """智能冲突解决器"""
+    """智能冲突解决器 - 基于 IntelligentDataProcessor"""
 
     def __init__(
         self,
@@ -30,22 +29,74 @@ class ConflictResolver:
         temperature: float = 0.1,
         enable_thinking: bool = False,
     ):
+        """
+        初始化冲突解决器
+        
+        Args:
+            openai_client: OpenAI 客户端
+            model: 模型名称
+            temperature: 温度参数
+            enable_thinking: 是否启用思考模式（暂不支持）
+        """
         self.client = openai_client
         self.model = model
         self.temperature = temperature
         self.enable_thinking = enable_thinking
+        
+        # 使用 IntelligentDataProcessor 作为核心处理器
+        self.processor = IntelligentDataProcessor.__new__(IntelligentDataProcessor)
+        # 直接注入 client（避免重复创建）
+        self.processor.llm_client = openai_client
+        self.processor.llm_model = model
+
+    @staticmethod
+    def _memory_to_record(memory: MemoryItem) -> DataRecord:
+        """将 MemoryItem 转换为 DataRecord"""
+        return DataRecord(
+            id=memory.id,
+            content=memory.content,
+            record_type=memory.memory_type.value,
+            metadata={
+                "user_id": memory.user_id,
+                "session_id": memory.session_id,
+                "entities": memory.entities,
+                "keywords": memory.keywords,
+                **memory.metadata
+            },
+            tags=memory.keywords,
+            created_at=memory.created_at,
+            updated_at=memory.updated_at,
+        )
+
+    @staticmethod
+    def _record_to_memory(record: DataRecord, memory_template: MemoryItem) -> MemoryItem:
+        """将 DataRecord 转换为 MemoryItem（保留原始元数据）"""
+        from ..async_memory.models import MemoryType
+        
+        return MemoryItem(
+            id=record.id,
+            content=record.content,
+            memory_type=MemoryType(record.record_type),
+            user_id=memory_template.user_id,
+            session_id=memory_template.session_id,
+            embedding=memory_template.embedding,
+            entities=record.metadata.get("entities", []),
+            keywords=record.tags,
+            metadata=record.metadata,
+        )
 
     async def evaluate_memory(
         self,
         new_memory: MemoryItem,
         similar_memories: List[tuple],  # List[(MemoryItem, similarity)]
-    ) -> tuple[MemoryAction, Optional[str], Optional[List[str]]]:
-        """评估新记忆如何处理
-
+    ) -> tuple[ProcessingAction, Optional[str], Optional[List[str]]]:
+        """
+        评估新记忆如何处理
+        
         Args:
             new_memory: 新记忆
             similar_memories: 相似记忆列表 [(MemoryItem, similarity), ...]
-
+            
         Returns:
             (action, merged_content, ids_to_delete)
             - action: 处理动作
@@ -54,76 +105,40 @@ class ConflictResolver:
         """
         if not similar_memories:
             logger.info(f"    无相似记忆，直接添加")
-            return MemoryAction.APPEND, None, None
+            return ProcessingAction.CREATE, None, None
 
-        # 构建 prompt
-        similar_list = "\n".join([
-            f"[{i+1}] (相似度:{sim:.4f}) {mem.content}"
-            for i, (mem, sim) in enumerate(similar_memories)
-        ])
+        # 转换为 DataRecord
+        new_record = self._memory_to_record(new_memory)
+        similar_records = [
+            (self._memory_to_record(mem), sim) 
+            for mem, sim in similar_memories
+        ]
 
-        prompt = f"""你是一个记忆管理助手。请评估新记忆与已有相似记忆的关系。
+        # 提取相似记录列表（不含相似度分数）
+        existing_records = [record for record, _ in similar_records]
 
-【新记忆】
-{new_memory.content}
+        # 直接调用 LLM 决策（简化方案：去掉所有预筛选，LLM是唯一决策者）
+        # memory.py 已简化为只做向量搜索取 top_k，不再做规则过滤
+        from ..data_processor import ProcessingDecision
 
-【已有相似记忆】
-{similar_list}
+        # 构建 (DataRecord, similarity_score) 列表传给 LLM
+        records_with_scores = list(zip(existing_records, [sim for _, sim in similar_memories]))
 
-请判断应该如何处理，返回 JSON 格式：
-{{
-    "action": "merge/replace/append/reject",
-    "reason": "判断理由",
-    "merged_content": "合并后的内容（仅merge时需要）",
-    "delete_ids": ["需要删除的记忆编号，如1,2,3"]
-}}
+        decision = await self.processor._make_decision_with_llm(
+            new_record, existing_records, similarity_scores=records_with_scores
+        )
 
-判断标准：
-- merge: 新旧记忆信息互补，合并后更完整
-- replace: 新记忆完全覆盖或更新旧记忆
-- append: 新记忆独立有价值，需要保留
-- reject: 新记忆无新信息，可以丢弃
+        # 构建结果（复用 processor 的 _build_processing_result 逻辑）
+        result = self.processor._build_processing_result(new_record, existing_records, decision)
 
-注意：编号对应【已有相似记忆】中的序号 [1], [2], [3] 等。
-"""
+        logger.info(f"    LLM 判断: action={result.action.value}, reason={result.reason}")
 
-        try:
-            request_params = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": self.temperature,
-                "response_format": {"type": "json_object"},
-            }
+        # 映射处理结果
+        action = result.action
+        merged_content = result.merged_content
+        ids_to_delete = result.affected_ids if action in [ProcessingAction.MERGE, ProcessingAction.DELETE] else None
 
-            request_params["extra_body"] = {"enable_thinking": False}
-
-            response = await self.client.chat.completions.create(**request_params)
-            result = json.loads(response.choices[0].message.content)
-
-            action_str = result.get("action", "append")
-            reason = result.get("reason", "")
-            merged_content = result.get("merged_content")
-            delete_indices = result.get("delete_ids", [])
-
-            logger.info(f"    LLM 判断: action={action_str}, reason={reason}")
-
-            # 解析动作
-            try:
-                action = MemoryAction(action_str)
-            except ValueError:
-                action = MemoryAction.APPEND
-
-            # 获取需要删除的记忆ID
-            ids_to_delete = []
-            for idx in delete_indices:
-                if isinstance(idx, int) and 1 <= idx <= len(similar_memories):
-                    ids_to_delete.append(similar_memories[idx - 1][0].id)
-
-            return action, merged_content, ids_to_delete if ids_to_delete else None
-
-        except Exception as e:
-            logger.error(f"LLM 评估失败: {e}")
-            return MemoryAction.APPEND, None, None
+        return action, merged_content, ids_to_delete
 
     async def detect_conflict(
         self,
@@ -132,28 +147,38 @@ class ConflictResolver:
         _similarity_threshold: float = 0.6,
         similarity_score: float = 0.0,
     ) -> Optional[ConflictInfo]:
-        """检测两个记忆是否存在冲突或需要合并（兼容旧接口）"""
-
+        """
+        检测两个记忆是否存在冲突或需要合并（兼容旧接口）
+        
+        Args:
+            old_memory: 旧记忆
+            new_memory: 新记忆
+            _similarity_threshold: 相似度阈值（暂未使用）
+            similarity_score: 相似度分数
+            
+        Returns:
+            ConflictInfo 或 None
+        """
         # 使用新的评估方法
         action, _merged_content, _ids_to_delete = await self.evaluate_memory(
             new_memory, [(old_memory, similarity_score)]
         )
 
-        if action == MemoryAction.MERGE:
+        if action == ProcessingAction.MERGE:
             return ConflictInfo(
                 old_memory=old_memory,
                 new_memory=new_memory,
                 conflict_type="update",
                 similarity_score=similarity_score,
             )
-        elif action == MemoryAction.REPLACE:
+        elif action == ProcessingAction.DELETE:
             return ConflictInfo(
                 old_memory=old_memory,
                 new_memory=new_memory,
                 conflict_type="contradiction",
                 similarity_score=similarity_score,
             )
-        elif action == MemoryAction.REJECT:
+        elif action == ProcessingAction.SKIP:
             # 标记为重复，让调用方跳过
             return ConflictInfo(
                 old_memory=old_memory,
@@ -163,4 +188,3 @@ class ConflictResolver:
             )
 
         return None
-

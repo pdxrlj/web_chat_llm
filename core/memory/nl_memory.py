@@ -39,7 +39,7 @@ def client() -> AsyncMemory:
         uri=storage_config.uri,
         token=storage_config.token,
         db_name=storage_config.db_name,
-        embedding_dim=768,  # bge-base-en-v1.5 默认维度
+        embedding_dim=512,  # bge-small-zh-v1.5 维度
     )
 
     # 从配置读取设备类型，默认 cuda
@@ -50,7 +50,7 @@ def client() -> AsyncMemory:
         storage=storage,
         enable_thinking=False,
         enable_conflict_detection=True,
-        similarity_threshold=0.6,  # 降低阈值，相似度>0.6即合并
+        similarity_threshold=0.85,  # 提高阈值，确保只处理真正相似的
         device=device,
     )
 
