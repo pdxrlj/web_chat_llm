@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.http.handlers.base import router
 from app.http.response import NlResponse
-from core.model.user_repo import create_user
+from core.model.user_repo import add_user_session_id, check_user_exists, create_user
 
 
 class CreateSessionRequest(BaseModel):
@@ -34,7 +34,7 @@ async def create_session(request: CreateSessionRequest) -> NlResponse:
     """
     创建新会话。
 
-    为用户创建一个新的会话，返回会话ID。
+    为用户创建一个新的会话,返回会话ID。
 
     Args:
         request: 包含用户名的请求体
@@ -44,7 +44,18 @@ async def create_session(request: CreateSessionRequest) -> NlResponse:
     """
     username = request.username
     session_id = str(uuid.uuid4())
-    _ = await create_user(username=username, session_id=session_id)
+
+    # 如果用户不存在则创建，然后添加会话
+    if not await check_user_exists(username):
+        return NlResponse(
+            content={
+                "username": username,
+                "session_id": session_id,
+            },
+            status_code=404,
+            message="用户不存在",
+        )
+    await add_user_session_id(username=username, session_id=session_id)
 
     return NlResponse(
         content=NLARegisterResponse(

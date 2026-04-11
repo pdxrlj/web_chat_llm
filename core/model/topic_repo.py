@@ -77,12 +77,18 @@ async def get_chat_topic(session_id: str, username: str) -> ChatTopicModel | Non
     raise RuntimeError("无法获取数据库会话")
 
 
-async def get_chat_topics_by_session(session_id: str) -> list[ChatTopicModel]:
+async def get_chat_topics_by_session(
+    session_id: str,
+    page: int = 1,
+    page_size: int = 20,
+) -> list[ChatTopicModel]:
     """
     根据会话ID获取所有话题。
 
     Args:
         session_id: 会话ID
+        page: 页码
+        page_size: 每页数量
 
     Returns:
         list[ChatTopicModel]: 话题列表
@@ -91,7 +97,11 @@ async def get_chat_topics_by_session(session_id: str) -> list[ChatTopicModel]:
 
     async for session in get_session():
         result = await session.execute(
-            select(ChatTopicModel).where(ChatTopicModel.session_id == session_id)
+            select(ChatTopicModel)
+            .where(ChatTopicModel.session_id == session_id)
+            .order_by(ChatTopicModel.created_at.desc())
+            .limit(page_size)
+            .offset((page - 1) * page_size)
         )
         return list(result.scalars().all())
     raise RuntimeError("无法获取数据库会话")

@@ -1,22 +1,22 @@
 from sqlalchemy import select
 
 from core.model.base import get_session
-from core.model.user import UserModel
+from core.model.user import UserModel, UserSessionModel
 
 
-async def create_user(username: str, session_id: str) -> UserModel:
+async def create_user(username: str, password: str) -> UserModel:
     """
     创建新用户。
 
     Args:
         username: 用户名
-        session_id: 会话ID
+        password: 密码
 
     Returns:
         UserModel: 创建的用户对象
     """
     async for session in get_session():
-        user = UserModel(username=username, session_id=session_id)
+        user = UserModel(username=username, password=password)
         session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -26,7 +26,7 @@ async def create_user(username: str, session_id: str) -> UserModel:
 
 async def get_user_by_session_id(session_id: str) -> UserModel | None:
     """
-    根据会话ID获取用户。
+    根据会话ID获取用户（从 user_sessions 关联表查找）。
 
     Args:
         session_id: 会话ID
@@ -36,7 +36,9 @@ async def get_user_by_session_id(session_id: str) -> UserModel | None:
     """
     async for session in get_session():
         result = await session.execute(
-            select(UserModel).where(UserModel.session_id == session_id)
+            select(UserModel)
+            .join(UserSessionModel, UserSessionModel.user_id == UserModel.id)
+            .where(UserSessionModel.session_id == session_id)
         )
         return result.scalar_one_or_none()
     raise RuntimeError("无法获取数据库会话")
@@ -75,4 +77,79 @@ async def delete_user(user_id: int) -> bool:
             await session.commit()
             return True
         return False
+    raise RuntimeError("无法获取数据库会话")
+
+
+async def check_user_exists(username: str) -> bool:
+    """
+    检查用户名是否存在。
+
+    Args:
+        username: 用户名
+
+    Returns:
+        bool: 是否存在
+    """
+    async for session in get_session():
+        result = await session.execute(
+            select(UserModel).where(UserModel.username == username)
+        )
+        return result.scalar_one_or_none() is not None
+    raise RuntimeError("无法获取数据库会话")
+
+
+async def check_user_password(username: str, password: str) -> bool:
+    """
+    检查用户名和密码是否匹配。
+
+    Args:
+        username: 用户名
+        password: 密码
+
+    Returns:
+        bool: 是否匹配
+    """
+    async for session in get_session():
+        result = await session.execute(
+            select(UserModel).where(UserModel.username == username)
+        )
+        user = result.scalar_one_or_none()
+        if user:
+            return user.password == password
+        return False
+    raise RuntimeError("无法获取数据库会话")
+
+
+async def add_user_session_id(username: str, session_id: str) -> bool:
+    """
+    为用户新增一个会话ID（一个用户可以有多个会话）。
+
+    Args:
+        username: 用户名
+        session_id: 新的会话ID
+
+    Returns:
+        bool: 是否添加成功
+    """
+    async for session in get_session():
+        # 查找用户
+        result = await session.execute(
+            select(UserModel).where(UserModel.username == username)
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            return False
+
+        # 检查该 session_id 是否已存在
+        existing = await session.execute(
+            select(UserSessionModel).where(UserSessionModel.session_id == session_id)
+        )
+        if existing.scalar_one_or_none():
+            return False
+
+        # 新增一条会话记录
+        new_session = UserSessionModel(user_id=user.id, session_id=session_id)
+        session.add(new_session)
+        await session.commit()
+        return True
     raise RuntimeError("无法获取数据库会话")
