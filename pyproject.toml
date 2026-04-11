@@ -3,7 +3,7 @@ name = "web-chat-new"
 version = "0.1.0"
 description = "AI Memory System with conflict detection"
 readme = "README.md"
-requires-python = "~=3.13"
+requires-python = ">=3.13"
 dependencies = [
     "asyncpg>=0.31.0",
     "fastapi>=0.135.3",
@@ -21,6 +21,8 @@ dependencies = [
     "aiohttp>=3.9.0",
     "beautifulsoup4>=4.12.0",
     "blinker>=1.9.0",
+    "langchain-skills-adapters>=0.1.2",
+    "python-frontmatter>=1.1.0",
 ]
 
 [project.optional-dependencies]

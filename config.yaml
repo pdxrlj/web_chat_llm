@@ -48,13 +48,13 @@ llm:
 
   - name: chat
     # model: qwen3.5-plus
-    model: qwen-flash
+    model: qwen3.5-flash
     model_provider: openai
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     api_key: "sk-0c6357bf1aad4ad5a38a309e0e1af404"
 
   - name: memory
-    model: qwen-flash
+    model: qwen3.5-flash
     model_provider: openai
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     api_key: "sk-0c6357bf1aad4ad5a38a309e0e1af404"

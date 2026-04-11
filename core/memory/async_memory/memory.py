@@ -549,7 +549,7 @@ class AsyncMemory:
         )
 
         # 根据新分数重新排序
-        reranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
+        reranked = sorted(zip(results, scores), key=lambda x: float(x[1]), reverse=True)
 
         # 返回 top_k 结果
         return [(memory, score) for (memory, _), score in reranked[:top_k]]

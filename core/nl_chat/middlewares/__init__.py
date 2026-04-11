@@ -4,5 +4,6 @@
 """
 
 from .summarization import SummarizationMiddleware
+from .debug_prompt import DebugPromptMiddleware
 
-__all__ = ["SummarizationMiddleware"]
+__all__ = ["SummarizationMiddleware", "DebugPromptMiddleware"]

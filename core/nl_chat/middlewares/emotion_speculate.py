@@ -113,64 +113,33 @@ class EmotionSpeculateMiddleware(AgentMiddleware):
 
             logger.debug(f"LLM 原始回复: {response_text[:200]}...")
 
-            # 尝试提取 JSON（可能被 markdown 代码块或其他文本包围）
+            # 尝试提取并解析 JSON
             import re
-            import json
 
-            # 尝试多种 JSON 提取方式
-            json_text = None
-
-            # 方式1: 提取 markdown 代码块中的 JSON
+            # 提取 markdown 代码块或第一个 JSON 对象
             json_match = re.search(
                 r"```json\s*(\{.*?\})\s*```", response_text, re.DOTALL
+            ) or re.search(r"\{.*\}", response_text, re.DOTALL)
+            json_text = (
+                json_match.group(1)
+                if json_match and json_match.lastindex
+                else (json_match.group(0) if json_match else response_text.strip())
             )
-            if json_match:
-                json_text = json_match.group(1)
-            else:
-                # 方式2: 提取第一个完整的 JSON 对象
-                json_match = re.search(
-                    r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", response_text, re.DOTALL
-                )
-                if json_match:
-                    json_text = json_match.group(0)
-                else:
-                    # 方式3: 直接使用原始文本
-                    json_text = response_text.strip()
 
-            # 尝试解析 JSON
             try:
-                # 先尝试直接解析
                 analysis_result = EmotionAnalysisResult.model_validate_json(json_text)
-            except Exception as json_error:
-                logger.warning(f"JSON 解析失败，尝试修复: {json_error}")
-
-                # 尝试修复常见的 JSON 问题
-                # 移除尾部的不完整内容
-                json_text = json_text.rstrip("\n\r\t ")
-
-                # 尝试找到最后一个完整的 JSON 对象
-                last_brace = json_text.rfind("}")
-                if last_brace > 0:
-                    json_text = json_text[: last_brace + 1]
-
-                # 再次尝试解析
-                try:
-                    analysis_result = EmotionAnalysisResult.model_validate_json(
-                        json_text
-                    )
-                except Exception as final_error:
-                    logger.warning(
-                        f"JSON 修复失败，跳过情感分析 (session: {session_id}): {final_error}"
-                    )
-                    return
+            except Exception as parse_error:
+                logger.warning(
+                    f"JSON 解析失败，跳过情感分析 (session: {session_id}): {parse_error}"
+                )
+                return
 
             logger.info(f"✅ 情感分析结果 (session: {session_id}): {analysis_result}")
 
-            # 发送结果到消息总线（包含 session_id）
-            # Blinker的send()方法将第一个参数作为sender，所以不使用关键字参数
             message_bus.send(
-                "EmotionSpeculateMiddleware",  # 发送者标识（作为第一个位置参数）
+                "EmotionSpeculateMiddleware",
                 message={
+                    "type": "emotion",
                     "session_id": session_id,
                     "emotion_analysis": analysis_result.model_dump(),
                 },
