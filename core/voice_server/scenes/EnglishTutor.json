@@ -3,10 +3,7 @@
     "icon": "https://bwg.zhenyekeji.com/aibuddy/chatrobot.jpg",
     "name": "英语老师"
   },
-  "AccountConfig": {
-    "accessKeyId": "VOLC_ACCESS_KEY_ID",
-    "secretKey": "VOLC_SECRET_KEY="
-  },
+  "AccountConfig": {},
   "RTCConfig": {
     "AppId": "6965b6f191472f0176cd89fc",
     "AppKey": "3a4695d5b02c406995b476cc86c411b1",

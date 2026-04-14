@@ -3,6 +3,10 @@ app:
   log_level: INFO
   device: cuda # cuda 或 cpu
 
+voice:
+  access_key_id: "VOLC_ACCESS_KEY_ID"
+  secret_key: "VOLC_SECRET_KEY="
+
 llm:
   - name: ark
     model: doubao-seed-1-6-flash-250828

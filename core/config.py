@@ -13,6 +13,13 @@ class AppConfig(BaseModel):
     device: str = "cuda"  # cuda 或 cpu
 
 
+class VoiceConfig(BaseModel):
+    """火山语音 RTC 配置"""
+
+    access_key_id: str = ""
+    secret_key: str = ""
+
+
 class LLMConfig(BaseModel):
     """LLM 模型配置"""
 
@@ -73,6 +80,7 @@ class Config(BaseModel):
     """主配置类"""
 
     app: AppConfig = Field(default_factory=AppConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
     llm: list[LLMConfig] = Field(default_factory=list)
     embedding: list[EmbeddingConfig] = Field(default_factory=list)
     storage: list[StorageConfig] = Field(default_factory=list)
