@@ -13,6 +13,7 @@ from typing import Any, AsyncGenerator, Optional
 from pathlib import Path
 
 from core.nl_chat.middlewares.emotion_speculate import EmotionSpeculateMiddleware
+from core.nl_chat.middlewares.chat_topic import ChatTopicMiddleware
 from core.nl_chat.tools.memory_search import search_memory
 from core.nl_chat.tools.read_file import read_file
 from core.nl_chat.tools.system_tools import get_all_system_tools
@@ -159,6 +160,8 @@ class ChatAgent:
 
         emotion_speculate_middleware = EmotionSpeculateMiddleware()
 
+        chat_topic_middleware = ChatTopicMiddleware()
+
         agent = create_agent(
             model=llm,
             tools=self.tools,
@@ -176,6 +179,7 @@ class ChatAgent:
             middleware=[
                 summarization_middleware,
                 emotion_speculate_middleware,
+                chat_topic_middleware,
                 DebugPromptMiddleware(),
             ],
             state_schema=ChatAgentState,

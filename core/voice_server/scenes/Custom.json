@@ -1,0 +1,82 @@
+{
+  "SceneConfig": {
+    "icon": "https://bwg.zhenyekeji.com/aibuddy/chatrobot.jpg",
+    "name": "Custom"
+  },
+  "AccountConfig": {
+    "accessKeyId": "VOLC_ACCESS_KEY_ID",
+    "secretKey": "VOLC_SECRET_KEY="
+  },
+  "RTCConfig": {
+    "AppId": "6965b6f191472f0176cd89fc",
+    "AppKey": "3a4695d5b02c406995b476cc86c411b1",
+    "RoomId": "ChatRoom01",
+    "UserId": "Huoshan01",
+    "Token": "0016965b6f191472f0176cd89fcSQAAlRkDwOZlaUAhb2kKAENoYXRSb29tMDEJAEh1b3NoYW4wMQYAAABAIW9pAQBAIW9pAgBAIW9pAwBAIW9pBABAIW9pBQBAIW9pIABl+xVkC2M1TPKdpqzPhr2FfM9Up1ilhcXrUBe9cmYDRA=="
+  },
+  "VoiceChat": {
+    "AppId": "6965b6f191472f0176cd89fc",
+    "RoomId": "ChatRoom01",
+    "TaskId": "ChatTask01",
+    "AgentConfig": {
+      "TargetUserId": [
+        "Huoshan01"
+      ],
+      "WelcomeMessage": "你好，我是小派，有什么想和我聊的吗？",
+      "UserId": "ChatBot01",
+      "EnableConversationStateCallback": true
+    },
+    "Config": {
+      "ASRConfig": {
+        "Provider": "volcano",
+        "ProviderParams": {
+          "Mode": "smallmodel",
+          "AppId": "3913556231",
+          "Cluster": "volcengine_streaming_common"
+        }
+      },
+      "TTSConfig": {
+        "Provider": "volcano",
+        "ProviderParams": {
+          "app": {
+            "appid": "9953330822",
+            "cluster": "volcano_tts"
+          },
+          "audio": {
+            "voice_type": "BV001_streaming",
+            "speed_ratio": 1,
+            "pitch_ratio": 1,
+            "volume_ratio": 1
+          }
+        }
+      },
+      "LLMConfig": {
+        "Mode": "CustomLLM",
+        "ModelName": "nlchat",
+        "Url": "https://chat.zhenyekeji.com/chatapi/v1/chat/completions",
+        "SystemMessages": [
+          "你是一个友好的AI助手。"
+        ],
+        "APIKey": "",
+        "VisionConfig": {
+          "Enable": false
+        },
+        "ThinkingType": "disabled"
+      },
+      "ExtraHeader": {
+        "Authorization": "",
+        "x-api-key": ""
+      },
+      "AvatarConfig": {
+        "Enabled": false,
+        "AvatarType": "3min",
+        "AvatarRole": "250623-zhibo-linyunzhi",
+        "BackgroundUrl": "",
+        "VideoBitrate": 2000,
+        "AvatarAppID": "",
+        "AvatarToken": ""
+      },
+      "InterruptMode": 0
+    }
+  }
+}

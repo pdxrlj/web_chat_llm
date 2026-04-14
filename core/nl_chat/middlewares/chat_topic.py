@@ -1,11 +1,10 @@
 import asyncio
-from typing import Any, Optional
+from typing import Any
 from langchain.agents import AgentState
 from langgraph.runtime import Runtime
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage
 from pydantic import Field, BaseModel, SecretStr
-from sqlalchemy.orm import state
 from core.config import LLMConfig, config
 from core.model.topic_repo import save_chat_topic
 from core.nl_chat.middlewares.emotion_speculate import message_bus
@@ -37,14 +36,18 @@ class TopicAnalysisResult(BaseModel):
 
 
 class ChatTopicMiddleware(AgentMiddleware):
-    def __init__(self, topic: str):
+    """对话主题分析中间件，每积累一定数量的消息后自动分析对话主题。"""
+
+    # 触发主题分析的消息缓存阈值
+    CACHE_THRESHOLD = 2
+
+    def __init__(self):
         self.cache: list[BaseMessage] = []
         self.topic_llm_config = config.get_llm("topic")
         if not self.topic_llm_config:
             raise ValueError("topic LLM 配置不存在")
 
     def _topic_llm(self):
-        # 构建参数，确保类型安全
         if not isinstance(self.topic_llm_config, LLMConfig):
             raise TypeError("topic LLM 配置类型错误")
 
@@ -59,20 +62,19 @@ class ChatTopicMiddleware(AgentMiddleware):
 
         return ChatOpenAI(**topic_config)
 
-    def _topic_prompt(self, user_question: list[BaseMessage]) -> list[BaseMessage]:
+    def _topic_prompt(
+        self, user_question: list[BaseMessage]
+    ) -> list[BaseMessage] | None:
         # 收集所有相关的对话消息（人类消息和AI消息）
         conversation_history = []
         for msg in user_question:
             if isinstance(msg, (HumanMessage, AIMessage)):
                 conversation_history.append(msg)
 
-        # 如果没有对话历史，返回空列表
+        # 如果没有对话历史，返回 None
         if not conversation_history:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.warning("未找到对话历史，无法进行主题分析")
-            return []
+            return None
 
         messages = [
             SystemMessage(content=TOPIC_ANALYSIS_PROMPT),
@@ -95,53 +97,61 @@ class ChatTopicMiddleware(AgentMiddleware):
             user_question: 用户问题
             session_id: 会话 ID
         """
-
-        logger.info(f"开始主题分析 (session: {session_id})")
-
-        topic_llm = self._topic_llm()
-
-        struct_llm = topic_llm.with_structured_output(TopicAnalysisResult)
-
-        messages = self._topic_prompt(user_question)
-        response = await struct_llm.ainvoke(messages)
         try:
-            analysis_result = TopicAnalysisResult.model_validate(response)
-        except Exception as parse_error:
-            logger.warning(
-                f"JSON 解析失败，跳过主题分析 (session: {session_id}): {parse_error}"
+            logger.info(f"开始主题分析 (session: {session_id})")
+
+            messages = self._topic_prompt(user_question)
+            if messages is None:
+                return
+
+            topic_llm = self._topic_llm()
+            struct_llm = topic_llm.with_structured_output(TopicAnalysisResult)
+            response = await struct_llm.ainvoke(messages)
+
+            try:
+                analysis_result = TopicAnalysisResult.model_validate(response)
+            except Exception as parse_error:
+                logger.warning(
+                    f"主题分析结果解析失败 (session: {session_id}): {parse_error}"
+                )
+                return
+
+            logger.info(f"主题分析结果 (session: {session_id}): {analysis_result}")
+
+            message_bus.send(
+                "ChatTopicMiddleware",
+                message={
+                    "type": "topic",
+                    "session_id": session_id,
+                    "topic_analysis": analysis_result.model_dump(),
+                },
             )
-            return TopicAnalysisResult(topic="", description="")
 
-        logger.info(f"✅ 主题分析结果 (session: {session_id}): {analysis_result}")
+            await save_chat_topic(
+                session_id=session_id,
+                username=session_id,
+                title=analysis_result.topic,
+                description=analysis_result.description,
+            )
 
-        message_bus.send(
-            "ChatTopicMiddleware",
-            message={
-                "type": "topic",
-                "session_id": session_id,
-                "topic_analysis": analysis_result.model_dump(),
-            },
-        )
+            self.cache = []
 
-        await save_chat_topic(
-            session_id=session_id,
-            username=session_id,
-            title=analysis_result.topic,
-            description=analysis_result.description,
-        )
-
-        self.cache = []
+        except Exception as e:
+            logger.error(f"主题分析失败 (session: {session_id}): {e}", exc_info=True)
 
     async def aafter_agent(
         self, state: AgentState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        if len(self.cache) <= 5:
-            self.cache.append(state["messages"][-1])
+        """Agent 执行后的钩子，积累消息达到阈值后触发主题分析。"""
+        self.cache.append(state["messages"][-1])
+
+        if len(self.cache) < self.CACHE_THRESHOLD:
             return None
 
         session_id = state.get("session_id", "unknown")
-        logger.info(f"开始主题分析 (session: {session_id})")
 
         asyncio.create_task(
             self._topic_analysis(session_id=session_id, user_question=self.cache)
         )
+
+        return None

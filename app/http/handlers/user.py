@@ -25,7 +25,7 @@ class LoginRequest(BaseModel):
         return v
 
 
-@router.post("/v1/chat/login")
+@router.post("/chat/login")
 async def login(request: Request, login_req: LoginRequest):
     """
     用户登录
@@ -39,19 +39,15 @@ async def login(request: Request, login_req: LoginRequest):
         NlResponse: 登录成功响应
     """
 
-    # 检查用户名是否存在
+    # 不存在则创建，存在则验证密码
     exists = await check_user_exists(login_req.username)
     if not exists:
-        return NlResponse(content={}, message="用户名不存在")
+        await create_user(login_req.username, login_req.password)
+        return NlResponse(content={}, message="注册成功")
 
-    if exists:
-        # 检查密码是否匹配
-        password_match = await check_user_password(
-            login_req.username, login_req.password
-        )
-        if not password_match:
-            return NlResponse(content={}, message="密码错误")
-        return NlResponse(content={}, message="登录成功")
-
-    await create_user(login_req.username, login_req.password)
-    return NlResponse(content={}, message="注册成功")
+    password_match = await check_user_password(
+        login_req.username, login_req.password
+    )
+    if not password_match:
+        return NlResponse(content={}, message="密码错误")
+    return NlResponse(content={}, message="登录成功")

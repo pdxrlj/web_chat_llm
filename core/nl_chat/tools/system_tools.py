@@ -142,18 +142,27 @@ def file_delete(file_path: str) -> str:
 # ======================== Shell 工具 ========================
 
 @tool
-def shell_execute(command: str, timeout: int = 30) -> str:
+def shell_execute(command: str, timeout: int = 3) -> str:
     """执行Shell命令并返回输出。
 
     Args:
         command: 要执行的Shell命令
-        timeout: 超时时间（秒），默认30秒
+        timeout: 超时时间（秒），默认3秒
 
     Returns:
         命令的标准输出和标准错误
     """
     try:
         logger.info(f"Shell执行: {command}")
+
+        # Windows 兼容：避免 shell 命令卡住
+        si = None
+        flags = 0
+        if os.name == "nt":
+            si = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW  # type: ignore[attr-defined]
+            flags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+
         result = subprocess.run(
             command,
             shell=True,
@@ -162,6 +171,8 @@ def shell_execute(command: str, timeout: int = 30) -> str:
             timeout=timeout,
             encoding="utf-8",
             errors="replace",
+            startupinfo=si,
+            creationflags=flags,
         )
 
         output_parts = []

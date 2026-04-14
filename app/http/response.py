@@ -14,6 +14,7 @@ class NlResponse(JSONResponse):
                  media_type: str | None = None, 
                  background: BackgroundTask | None = None) -> None:
         response_content = {
+            "code": status_code,
             "message": message,
             "data": content
         }

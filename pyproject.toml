@@ -23,6 +23,7 @@ dependencies = [
     "blinker>=1.9.0",
     "langchain-skills-adapters>=0.1.2",
     "python-frontmatter>=1.1.0",
+    "watchdog>=6.0.0",
 ]
 
 [project.optional-dependencies]

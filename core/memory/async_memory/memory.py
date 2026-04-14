@@ -534,6 +534,7 @@ class AsyncMemory:
                 self.reranker_model,
                 device=self.device,
                 cache_folder="./models",
+                local_files_only=True,
             )
 
         # 准备候选文档
@@ -843,6 +844,7 @@ class AsyncMemory:
                     # 禁用远程检查和更新
                     use_auth_token=False,
                     trust_remote_code=False,
+                    local_files_only=True,
                 )
 
             # 生成向量

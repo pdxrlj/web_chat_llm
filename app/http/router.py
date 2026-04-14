@@ -8,6 +8,8 @@ from typing import cast
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.http.response import NlResponse
 from core.config import PostgresStorageConfig
@@ -81,9 +83,19 @@ def register_handlers(app: FastAPI) -> None:
         if msg.startswith("Value error, "):
             msg = msg[13:]
 
-        logger.error(f"参数验证失败: {msg}")
+        logger.error(f"参数验证失败: {msg}, field: {field}")
 
-        return NlResponse(content={"field": field}, message=msg, status_code=400)
+        return NlResponse(
+            content={},
+            message=f"{msg}, field: {field}" if field else msg,
+            status_code=400,
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(  # pyright: ignore[reportUnusedFunction]
+        _request: Request, exc: StarletteHTTPException
+    ):
+        return NlResponse(content={}, message=exc.detail, status_code=exc.status_code)
 
     app.add_middleware(
         CORSMiddleware,

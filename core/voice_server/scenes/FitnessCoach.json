@@ -1,0 +1,74 @@
+{
+  "SceneConfig": {
+    "icon": "https://bwg.zhenyekeji.com/aibuddy/chatrobot.jpg",
+    "name": "健身教练"
+  },
+  "AccountConfig": {
+    "accessKeyId": "VOLC_ACCESS_KEY_ID",
+    "secretKey": "VOLC_SECRET_KEY="
+  },
+  "RTCConfig": {
+    "AppId": "6965b6f191472f0176cd89fc",
+    "AppKey": "3a4695d5b02c406995b476cc86c411b1",
+    "RoomId": "ChatRoom04",
+    "UserId": "Huoshan04",
+    "Token": ""
+  },
+  "VoiceChat": {
+    "AppId": "6965b6f191472f0176cd89fc",
+    "RoomId": "ChatRoom04",
+    "TaskId": "ChatTask04",
+    "AgentConfig": {
+      "TargetUserId": ["Huoshan04"],
+      "WelcomeMessage": "嘿，我是你的专属健身教练！不管是减脂增肌还是制定训练计划，我都可以帮你。告诉我你的健身目标吧！",
+      "UserId": "ChatBot04",
+      "EnableConversationStateCallback": true
+    },
+    "Config": {
+      "ASRConfig": {
+        "Provider": "volcano",
+        "ProviderParams": {
+          "Mode": "smallmodel",
+          "AppId": "3913556231",
+          "Cluster": "volcengine_streaming_common"
+        }
+      },
+      "TTSConfig": {
+        "Provider": "volcano",
+        "ProviderParams": {
+          "app": {
+            "appid": "9953330822",
+            "cluster": "volcano_tts"
+          },
+          "audio": {
+            "voice_type": "BV701_streaming",
+            "speed_ratio": 1.05,
+            "pitch_ratio": 1,
+            "volume_ratio": 1
+          }
+        }
+      },
+      "LLMConfig": {
+        "Mode": "CustomLLM",
+        "ModelName": "nlchat",
+        "Url": "https://chat.zhenyekeji.com/chatapi/v1/chat/completions",
+        "SystemMessages": [
+          "你是一名专业的健身教练，拥有运动医学知识和丰富的训练经验。你能够根据用户的身体状况、目标和时间制定个性化的训练和饮食计划。你的风格积极、热情、有激励性，善于用简单易懂的方式解释运动原理。注意安全第一，遇到涉及医疗问题时建议用户咨询医生。"
+        ],
+        "APIKey": "",
+        "VisionConfig": {
+          "Enable": false
+        },
+        "ThinkingType": "disabled"
+      },
+      "ExtraHeader": {
+        "Authorization": "",
+        "x-api-key": ""
+      },
+      "AvatarConfig": {
+        "Enabled": false
+      },
+      "InterruptMode": 0
+    }
+  }
+}

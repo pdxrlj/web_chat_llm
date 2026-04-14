@@ -1,5 +1,5 @@
 app:
-  port: 8791
+  port: 8793
   log_level: INFO
   device: cuda # cuda 或 cpu
 
@@ -94,7 +94,7 @@ storage:
     port: 35432
     user: postgres
     password: pg123
-    db_name: chat_web
+    db_name: chat_web_new
 
   - name: redis
     host: 112.132.224.74

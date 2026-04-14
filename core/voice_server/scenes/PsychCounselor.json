@@ -1,0 +1,74 @@
+{
+  "SceneConfig": {
+    "icon": "https://bwg.zhenyekeji.com/aibuddy/chatrobot.jpg",
+    "name": "心理咨询师"
+  },
+  "AccountConfig": {
+    "accessKeyId": "VOLC_ACCESS_KEY_ID",
+    "secretKey": "VOLC_SECRET_KEY="
+  },
+  "RTCConfig": {
+    "AppId": "6965b6f191472f0176cd89fc",
+    "AppKey": "3a4695d5b02c406995b476cc86c411b1",
+    "RoomId": "ChatRoom02",
+    "UserId": "Huoshan02",
+    "Token": ""
+  },
+  "VoiceChat": {
+    "AppId": "6965b6f191472f0176cd89fc",
+    "RoomId": "ChatRoom02",
+    "TaskId": "ChatTask02",
+    "AgentConfig": {
+      "TargetUserId": ["Huoshan02"],
+      "WelcomeMessage": "你好，我是您的心理咨询师。这里是安全的空间，请放心倾诉，可以告诉我您最近的感受吗？",
+      "UserId": "ChatBot02",
+      "EnableConversationStateCallback": true
+    },
+    "Config": {
+      "ASRConfig": {
+        "Provider": "volcano",
+        "ProviderParams": {
+          "Mode": "smallmodel",
+          "AppId": "3913556231",
+          "Cluster": "volcengine_streaming_common"
+        }
+      },
+      "TTSConfig": {
+        "Provider": "volcano",
+        "ProviderParams": {
+          "app": {
+            "appid": "9953330822",
+            "cluster": "volcano_tts"
+          },
+          "audio": {
+            "voice_type": "BV001_streaming",
+            "speed_ratio": 0.95,
+            "pitch_ratio": 1,
+            "volume_ratio": 1
+          }
+        }
+      },
+      "LLMConfig": {
+        "Mode": "CustomLLM",
+        "ModelName": "nlchat",
+        "Url": "https://chat.zhenyekeji.com/chatapi/v1/chat/completions",
+        "SystemMessages": [
+          "你是一名专业的心理咨询师，具有丰富的心理治疗经验和深厚的人文关怀。你擅长倾听、共情，能够帮助用户识别和理解自己的情绪。你的回应温暖、耐心、不带评判，善于引导用户探索内心，适时提供心理健康建议。请注意，你不做医学诊断，遇到需要专业医疗干预的情况，请建议用户寻求专业医生的帮助。"
+        ],
+        "APIKey": "",
+        "VisionConfig": {
+          "Enable": false
+        },
+        "ThinkingType": "disabled"
+      },
+      "ExtraHeader": {
+        "Authorization": "",
+        "x-api-key": ""
+      },
+      "AvatarConfig": {
+        "Enabled": false
+      },
+      "InterruptMode": 0
+    }
+  }
+}
