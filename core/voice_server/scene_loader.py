@@ -4,7 +4,7 @@
 从 scenes 目录加载所有 JSON 场景配置文件，并从 config.yaml 注入 AccountConfig。
 """
 
-import json
+import commentjson
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,7 @@ def load_scenes(scenes_dir: str | Path) -> dict[str, dict[str, Any]]:
 
     for json_file in sorted(scenes_path.glob("*.json")):
         try:
-            data = json.loads(json_file.read_text(encoding="utf-8"))
+            data = commentjson.loads(json_file.read_text(encoding="utf-8"))
             scene_id = json_file.stem
             # 用 config.yaml 中的凭据覆盖 JSON 中的 AccountConfig
             data["AccountConfig"] = account_config

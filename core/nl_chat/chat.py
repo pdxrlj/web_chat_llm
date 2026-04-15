@@ -14,6 +14,7 @@ from pathlib import Path
 
 from core.nl_chat.middlewares.emotion_speculate import EmotionSpeculateMiddleware
 from core.nl_chat.middlewares.chat_topic import ChatTopicMiddleware
+from core.nl_chat.prompt_mgr import get_session_prompt
 from core.nl_chat.tools.memory_search import search_memory
 from core.nl_chat.tools.read_file import read_file
 from core.nl_chat.tools.system_tools import get_all_system_tools
@@ -138,11 +139,12 @@ class ChatAgent:
 
         return ChatOpenAI(**chat_kwargs)
 
-    def _create_agent(self, model: str) -> Any:
+    def _create_agent(self, model: str, session_id: str) -> Any:
         """创建或获取 Agent 实例
 
         Args:
             model: 模型名称
+            session_id: 会话ID
 
         Returns:
             CompiledStateGraph 实例
@@ -165,17 +167,7 @@ class ChatAgent:
         agent = create_agent(
             model=llm,
             tools=self.tools,
-            system_prompt=(
-                "你是一个友善、自然的对话伙伴。你的名字是奶龙，合肥绝对派公司创造的。在与用户交流时，像一个贴心的朋友一样自然地运用你对用户的了解。"
-                "不要刻意提及'记忆'、'数据库'或'之前提到过'等术语，就像普通人聊天一样随意自然。用简洁、真诚的方式回应。\n\n"
-                "## 重要：工具使用规则\n"
-                "你可以使用工具来完成特定任务。当需要使用工具时，必须通过 function calling（工具调用）来执行，"
-                "绝对不要输出 XML 标签（如 <websearch>、<question> 等）来代替工具调用。\n\n"
-                "## 技能使用规则（必须严格遵守）\n"
-                "当用户的问题匹配 <available_skills> 中某个技能的描述时，你**必须**先调用 activate_skill 工具加载该技能的完整指令，"
-                "然后严格按照指令操作。**绝对不要**跳过 activate_skill 这一步，"
-                "**绝对不要**根据自己的理解猜测技能的使用方式。\n\n"
-            ),
+            system_prompt=get_session_prompt(session_id),
             middleware=[
                 summarization_middleware,
                 emotion_speculate_middleware,
@@ -239,7 +231,7 @@ class ChatAgent:
         logger.info(f"{'='*60}")
 
         # 2. 创建或获取 Agent
-        agent = self._create_agent(model)
+        agent = self._create_agent(model, session_id)
 
         # 3. 构建输入消息
         messages: list[BaseMessage] = []
@@ -297,7 +289,6 @@ class ChatAgent:
             if kind == "on_tool_start":
                 tool_name = event.get("name", "")
                 tool_input = event.get("data", {}).get("input", {})
-                # 监听 activate_skill 工具调用
                 if tool_name == "activate_skill":
                     skill_name = (
                         tool_input.get("name", "")

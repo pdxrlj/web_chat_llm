@@ -394,6 +394,24 @@ def get_scenes(
         scene_config["isAvatarScene"] = avatar_config.get("Enabled", False)
         scene_config["avatarBgUrl"] = avatar_config.get("BackgroundUrl", "")
 
+        # 返回 TTSConfig 配置信息
+        tts_config = config.get("TTSConfig", {})
+        scene_config["ttsConfig"] = {
+            "provider": tts_config.get("Provider", ""),
+            "voiceType": tts_config.get("ProviderParams", {})
+            .get("audio", {})
+            .get("voice_type", ""),
+            "speedRatio": tts_config.get("ProviderParams", {})
+            .get("audio", {})
+            .get("speed_ratio", 1),
+            "pitchRatio": tts_config.get("ProviderParams", {})
+            .get("audio", {})
+            .get("pitch_ratio", 1),
+            "volumeRatio": tts_config.get("ProviderParams", {})
+            .get("audio", {})
+            .get("volume_ratio", 1),
+        }
+
         logger.info(
             f"[getScenes] {scene_id} - AppId: {app_id}, RoomId: {room_id}, UserId: {user_id}"
         )
@@ -402,6 +420,7 @@ def get_scenes(
             {
                 "scene": scene_config,
                 "rtc": rtc_result,
+                "voiceChat": voice_chat,  # 返回完整 VoiceChat 配置
             }
         )
 

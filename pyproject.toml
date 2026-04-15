@@ -24,6 +24,8 @@ dependencies = [
     "langchain-skills-adapters>=0.1.2",
     "python-frontmatter>=1.1.0",
     "watchdog>=6.0.0",
+    "rich>=14.3.4",
+    "commentjson>=0.9.0",
 ]
 
 [project.optional-dependencies]

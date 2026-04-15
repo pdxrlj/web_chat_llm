@@ -36,11 +36,11 @@
         "Provider": "volcano",
         "ProviderParams": {
           "app": {
-            "appid": "9953330822",
+            "appid": "3913556231",
             "cluster": "volcano_tts"
           },
-          "audio": {
-            "voice_type": "BV001_streaming",
+          "audio": { // 可用音色 https://console.volcengine.com/speech/service/10007?AppID=3913556231&ResourceID=volc.tts.default
+            "voice_type": "zh_female_wanqudashu_moon_bigtts",
             "speed_ratio": 1,
             "pitch_ratio": 1,
             "volume_ratio": 1

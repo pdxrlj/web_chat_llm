@@ -238,6 +238,15 @@ wheels = [
 ]
 
 [[package]]
+name = "commentjson"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lark-parser" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c0/76/c4aa9e408dbacee3f4de8e6c5417e5f55de7e62fb5a50300e1233a2c9cb5/commentjson-0.9.0.tar.gz", hash = "sha256:42f9f231d97d93aff3286a4dc0de39bfd91ae823d1d9eba9fa901fe0c7113dd4", size = 8653, upload-time = "2020-10-05T18:49:06.524Z" }
+
+[[package]]
 name = "cuda-bindings"
 version = "12.9.4"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
@@ -838,6 +847,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/46/e7/d27d952ce9824d684
 wheels = [
     { url = "https://files.pythonhosted.org/packages/37/19/96250cf58070c5563446651b03bb76c2eb5afbf08e754840ab639532d8c6/langsmith-0.7.30-py3-none-any.whl", hash = "sha256:43dd9f8d290e4d406606d6cc0bd62f5d1050963f05fe0ab6ffe50acf41f2f55a", size = 372682, upload-time = "2026-04-09T21:12:00.481Z" },
 ]
+
+[[package]]
+name = "lark-parser"
+version = "0.7.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/b8/aa7d6cf2d5efdd2fcd85cf39b33584fe12a0f7086ed451176ceb7fb510eb/lark-parser-0.7.8.tar.gz", hash = "sha256:26215ebb157e6fb2ee74319aa4445b9f3b7e456e26be215ce19fdaaa901c20a4", size = 276204, upload-time = "2019-11-01T12:45:26.558Z" }
 
 [[package]]
 name = "markdown-it-py"
@@ -2236,6 +2251,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "beautifulsoup4" },
     { name = "blinker" },
+    { name = "commentjson" },
     { name = "fastapi" },
     { name = "langchain" },
     { name = "langchain-experimental" },
@@ -2246,6 +2262,7 @@ dependencies = [
     { name = "pymilvus" },
     { name = "python-frontmatter" },
     { name = "pyyaml" },
+    { name = "rich" },
     { name = "sentence-transformers" },
     { name = "sqlalchemy" },
     { name = "torch" },
@@ -2265,6 +2282,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "blinker", specifier = ">=1.9.0" },
+    { name = "commentjson", specifier = ">=0.9.0" },
     { name = "fastapi", specifier = ">=0.135.3" },
     { name = "langchain", specifier = ">=1.2.15" },
     { name = "langchain-experimental", specifier = ">=0.0.42" },
@@ -2277,6 +2295,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "python-frontmatter", specifier = ">=1.1.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "rich", specifier = ">=14.3.4" },
     { name = "sentence-transformers", specifier = ">=5.3.0" },
     { name = "sqlalchemy", specifier = ">=2.0.48" },
     { name = "torch", specifier = ">=2.10.0" },

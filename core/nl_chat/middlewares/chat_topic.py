@@ -1,4 +1,5 @@
 import asyncio
+import warnings
 from typing import Any
 from langchain.agents import AgentState
 from langgraph.runtime import Runtime
@@ -105,37 +106,38 @@ class ChatTopicMiddleware(AgentMiddleware):
                 return
 
             topic_llm = self._topic_llm()
-            struct_llm = topic_llm.with_structured_output(TopicAnalysisResult)
-            response = await struct_llm.ainvoke(messages)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*PydanticSerializationUnexpectedValue.*",
+                    category=UserWarning,
+                )
+                struct_llm = topic_llm.with_structured_output(TopicAnalysisResult)
+                response = await struct_llm.ainvoke(messages)
 
-            try:
-                analysis_result = TopicAnalysisResult.model_validate(response)
-            except Exception as parse_error:
+            if not isinstance(response, TopicAnalysisResult):
                 logger.warning(
-                    f"主题分析结果解析失败 (session: {session_id}): {parse_error}"
+                    f"主题分析结果类型异常，跳过 (session: {session_id}): {type(response)}"
                 )
                 return
 
-            logger.info(f"主题分析结果 (session: {session_id}): {analysis_result}")
+            logger.info(f"主题分析结果 (session: {session_id}): {response}")
 
             message_bus.send(
                 "ChatTopicMiddleware",
                 message={
                     "type": "topic",
                     "session_id": session_id,
-                    "topic_analysis": analysis_result.model_dump(),
+                    "topic_analysis": response.model_dump(),
                 },
             )
 
             await save_chat_topic(
                 session_id=session_id,
                 username=session_id,
-                title=analysis_result.topic,
-                description=analysis_result.description,
+                title=response.topic,
+                description=response.description,
             )
-
-            self.cache = []
-
         except Exception as e:
             logger.error(f"主题分析失败 (session: {session_id}): {e}", exc_info=True)
 
@@ -143,15 +145,22 @@ class ChatTopicMiddleware(AgentMiddleware):
         self, state: AgentState, runtime: Runtime
     ) -> dict[str, Any] | None:
         """Agent 执行后的钩子，积累消息达到阈值后触发主题分析。"""
-        self.cache.append(state["messages"][-1])
+        messages = state.get("messages", [])
+        if not messages:
+            return None
+
+        self.cache.append(messages[-1])
 
         if len(self.cache) < self.CACHE_THRESHOLD:
             return None
 
         session_id = state.get("session_id", "unknown")
 
+        cache_snapshot = self.cache
+        self.cache = []
+
         asyncio.create_task(
-            self._topic_analysis(session_id=session_id, user_question=self.cache)
+            self._topic_analysis(session_id=session_id, user_question=cache_snapshot)
         )
 
         return None

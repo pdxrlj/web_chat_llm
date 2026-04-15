@@ -5,6 +5,8 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 from app.http.response import NlResponse
 from core.nl_chat.chat import ChatAgent
+from core.helper.bprint import log_table
+
 
 logger = setup_logger("chat_router")
 
@@ -25,7 +27,7 @@ class NLAIChatRequest(BaseModel):
     messages: list[dict[str, object]]
     temperature: float = 0.7
     top_p: float = 0.5
-    stream: bool = True  # 兼容 OpenAI 格式
+    stream: bool = True
 
 
 @router.post("/chat/completions")
@@ -51,17 +53,16 @@ async def chat(request: Request, nl_request: NLAIChatRequest):
             status_code=400,
         )
 
-    logger.info(
-        " ".join(
-            [
-                "Chat request -",
-                f"session_id: {session_id},",
-                f"model: {nl_request.model},",
-                f"messages_count: {len(nl_request.messages)},",
-                f"temperature: {nl_request.temperature},",
-                f"top_p: {nl_request.top_p}",
-            ]
-        )
+    log_table(
+        logger,
+        "Chat Request",
+        {
+            "session_id": session_id,
+            "model": nl_request.model,
+            "messages_count": len(nl_request.messages),
+            "temperature": nl_request.temperature,
+            "top_p": nl_request.top_p,
+        },
     )
 
     # 从消息中提取用户问题（最后一条消息）
@@ -75,10 +76,8 @@ async def chat(request: Request, nl_request: NLAIChatRequest):
     last_message = nl_request.messages[-1]
     question = str(last_message.get("content", ""))
 
-    # 获取 ChatAgent 实例
     agent = get_chat_agent()
 
-    # 返回流式响应
     return StreamingResponse(
         agent.chat_stream(
             model=nl_request.model,

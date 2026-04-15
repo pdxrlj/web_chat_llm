@@ -11,6 +11,7 @@ class AppConfig(BaseModel):
     port: int = 8000
     log_level: str = "INFO"
     device: str = "cuda"  # cuda 或 cpu
+    pretty_print: bool = True  # 是否开启美化打印（基于 rich）
 
 
 class VoiceConfig(BaseModel):
