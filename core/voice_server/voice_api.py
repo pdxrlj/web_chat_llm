@@ -25,8 +25,8 @@ logger = setup_logger("voice_api")
 # 场景配置缓存（按 scenes_dir 缓存）
 _scenes_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
-# 运行时状态：记录每个 scene 最近一次 StartVoiceChat 使用的参数
-# key = f"{scene_id}:{app_id}:{room_id}", value = {AppId, RoomId, TaskId, ...}
+# 运行时状态：记录每个会话的 StartVoiceChat 参数
+# key = session_id, value = {scene_id, app_id, room_id, task_id, ...}
 _runtime_state: dict[str, dict[str, Any]] = {}
 
 # 共享 HTTP Session
@@ -172,6 +172,9 @@ async def proxy_voice_api(
 
     body: dict[str, Any] = {}
 
+    # 从请求中提取 session_id（所有 action 都可能需要）
+    session_id = (http_headers or {}).get("session_id") or request_body.get("SessionId")
+
     if action == "StartVoiceChat":
         # 深拷贝避免污染缓存
         body = copy.deepcopy(voice_chat)
@@ -208,9 +211,6 @@ async def proxy_voice_api(
             llm_config["APIKey"] = custom_headers.get("Authorization", "")
 
         # 将 session_id 写入 ExtraHeader，供 CustomLLM 回调时透传
-        session_id = (http_headers or {}).get("session_id") or (
-            request_body.get("SessionId")
-        )
         logger.info(
             f"[proxy:StartVoiceChat] session_id from header: {session_id}, http_headers keys: {list((http_headers or {}).keys())}"
         )
@@ -233,22 +233,25 @@ async def proxy_voice_api(
         )
 
     elif action == "StopVoiceChat":
+        # session_id 已在前面提取，用于查找运行时状态
+        runtime = _runtime_state.get(session_id, {}) if session_id else {}
+
         # 优先使用前端传入的参数
         # 其次使用运行时状态（StartVoiceChat 保存的参数）
         # 最后 fallback 到缓存原始值
         app_id = (
             request_body.get("AppId")
-            or _runtime_state.get(f"{scene_id}:app_id")
+            or runtime.get("app_id")
             or voice_chat.get("AppId")
         )
         room_id = (
             request_body.get("RoomId")
-            or _runtime_state.get(f"{scene_id}:room_id")
+            or runtime.get("room_id")
             or voice_chat.get("RoomId")
         )
         task_id = (
             request_body.get("TaskId")
-            or _runtime_state.get(f"{scene_id}:task_id")
+            or runtime.get("task_id")
             or voice_chat.get("TaskId")
         )
         _assert(app_id, "VoiceChat.AppId 不能为空")
@@ -288,27 +291,28 @@ async def proxy_voice_api(
 
     logger.info(f"[{action}] 请求结果: {json.dumps(result, ensure_ascii=False)[:500]}")
 
-    # StartVoiceChat 成功后，保存运行时状态供 StopVoiceChat 使用
+    # StartVoiceChat 成功后，保存运行时状态供 StopVoiceChat / UpdateVoiceChat 使用
     if action == "StartVoiceChat" and result.get("Result") == "ok":
         _app_id = body.get("AppId")
         _room_id = body.get("RoomId")
         _task_id = body.get("TaskId")
-        if _app_id is not None:
-            _runtime_state[f"{scene_id}:app_id"] = _app_id
-        if _room_id is not None:
-            _runtime_state[f"{scene_id}:room_id"] = _room_id
-        if _task_id is not None:
-            _runtime_state[f"{scene_id}:task_id"] = _task_id
+        # 使用 session_id 作为 key，支持多会话并行
+        if session_id:
+            _runtime_state[session_id] = {
+                "scene_id": scene_id,
+                "app_id": _app_id,
+                "room_id": _room_id,
+                "task_id": _task_id,
+            }
         logger.info(
             f"[proxy:StartVoiceChat] 已保存运行时状态: "
-            f"AppId={_app_id}, RoomId={_room_id}, TaskId={_task_id}"
+            f"session_id={session_id}, AppId={_app_id}, RoomId={_room_id}, TaskId={_task_id}"
         )
     # StopVoiceChat 成功后，清除运行时状态
     elif action == "StopVoiceChat" and result.get("Result") == "ok":
-        _runtime_state.pop(f"{scene_id}:app_id", None)
-        _runtime_state.pop(f"{scene_id}:room_id", None)
-        _runtime_state.pop(f"{scene_id}:task_id", None)
-        logger.info(f"[proxy:StopVoiceChat] 已清除运行时状态: scene_id={scene_id}")
+        if session_id and session_id in _runtime_state:
+            del _runtime_state[session_id]
+            logger.info(f"[proxy:StopVoiceChat] 已清除运行时状态: session_id={session_id}")
 
     return result
 

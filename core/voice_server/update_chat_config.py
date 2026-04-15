@@ -181,20 +181,17 @@ async def update_voice_chat(
         raise ValueError(f"{scene_id} 不存在, 请先在 scenes 目录下定义该场景的 JSON")
 
     account_config: dict[str, Any] = json_data.get("AccountConfig", {})
-    # 从请求或运行时状态获取必要的 RoomId/AppId/TaskId
-    app_id = request_body.get("AppId")
-    room_id = request_body.get("RoomId")
-    task_id = request_body.get("TaskId")
 
-    # 尝试从 voice_api 的运行时状态获取
+    # 尝试从 session_id 对应的运行时状态获取 AppId/RoomId/TaskId
+    session_id = request_body.get("SessionId")
     from core.voice_server import voice_api
 
-    if not app_id:
-        app_id = voice_api._runtime_state.get(f"{scene_id}:app_id")
-    if not room_id:
-        room_id = voice_api._runtime_state.get(f"{scene_id}:room_id")
-    if not task_id:
-        task_id = voice_api._runtime_state.get(f"{scene_id}:task_id")
+    runtime = voice_api._runtime_state.get(session_id, {}) if session_id else {}
+
+    # 从请求或运行时状态获取必要参数
+    app_id = request_body.get("AppId") or runtime.get("app_id")
+    room_id = request_body.get("RoomId") or runtime.get("room_id")
+    task_id = request_body.get("TaskId") or runtime.get("task_id")
 
     logger.info(
         f"[UpdateVoiceChat] 使用账户配置:\n"
