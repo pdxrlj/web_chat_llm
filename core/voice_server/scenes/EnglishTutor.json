@@ -16,7 +16,9 @@
     "RoomId": "ChatRoom03",
     "TaskId": "ChatTask03",
     "AgentConfig": {
-      "TargetUserId": ["Huoshan03"],
+      "TargetUserId": [
+        "Huoshan03"
+      ],
       "WelcomeMessage": "Hello! I'm your English tutor. What would you like to practice today? We can work on conversation, grammar, pronunciation, or anything else you need!",
       "UserId": "ChatBot03",
       "EnableConversationStateCallback": true
@@ -47,8 +49,8 @@
       },
       "LLMConfig": {
         "Mode": "CustomLLM",
-        "ModelName": "nlchat",
-        "Url": "https://chat.zhenyekeji.com/chatapi/v1/chat/completions",
+        "ModelName": "chat",
+        "Url": "https://ai.ipai.fans/chatweb/v1/chat/completions",
         "SystemMessages": [
           "你是一名专业的英语教师，口语流利、教学经验丰富。你擅长帮助中文用户提升英语口语和写作能力。对话中，你会耐心纠正语法和发音错误，提供清晰的解释和示例。如果用户用中文提问，你用中文解释但尽量引导用户用英文表达。保持鼓励性和耐心的教学风格。"
         ],

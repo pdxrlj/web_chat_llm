@@ -9,7 +9,7 @@
     "AppKey": "3a4695d5b02c406995b476cc86c411b1",
     "RoomId": "ChatRoom01",
     "UserId": "Huoshan01",
-    "Token": "0016965b6f191472f0176cd89fcSQAAlRkDwOZlaUAhb2kKAENoYXRSb29tMDEJAEh1b3NoYW4wMQYAAABAIW9pAQBAIW9pAgBAIW9pAwBAIW9pBABAIW9pBQBAIW9pIABl+xVkC2M1TPKdpqzPhr2FfM9Up1ilhcXrUBe9cmYDRA=="
+    "Token": "0016965b6f191472f0176cd89fcSQAYD78BMvPdabIt52kKAENoYXRSb29tMDEJAEh1b3NoYW4wMQYAAACyLedpAQCyLedpAgCyLedpAwCyLedpBACyLedpBQCyLedpIABr+2TiijdmKb4nuiUGOOAsJc1ldTHJAOLzDH5K6HcMTA=="
   },
   "VoiceChat": {
     "AppId": "6965b6f191472f0176cd89fc",
@@ -49,8 +49,8 @@
       },
       "LLMConfig": {
         "Mode": "CustomLLM",
-        "ModelName": "nlchat",
-        "Url": "https://chat.zhenyekeji.com/chatapi/v1/chat/completions",
+        "ModelName": "chat",
+        "Url": "https://ai.ipai.fans/chatweb/v1/chat/completions",
         "SystemMessages": [
           "你是一个友好的AI助手。"
         ],
@@ -60,10 +60,7 @@
         },
         "ThinkingType": "disabled"
       },
-      "ExtraHeader": {
-        "Authorization": "",
-        "x-api-key": ""
-      },
+      "ExtraHeader": {},
       "AvatarConfig": {
         "Enabled": false,
         "AvatarType": "3min",

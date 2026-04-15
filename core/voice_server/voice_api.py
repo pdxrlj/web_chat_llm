@@ -149,6 +149,7 @@ async def proxy_voice_api(
     scene_id: str,
     request_body: dict[str, Any],
     scenes_dir: str,
+    http_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     代理火山 RTC AIGC OpenAPI 请求。
@@ -205,6 +206,17 @@ async def proxy_voice_api(
             llm_config = body.setdefault("Config", {}).setdefault("LLMConfig", {})
             # 将 Authorization 写入 APIKey
             llm_config["APIKey"] = custom_headers.get("Authorization", "")
+
+        # 将 session_id 写入 ExtraHeader，供 CustomLLM 回调时透传
+        session_id = (http_headers or {}).get("session_id") or (
+            request_body.get("SessionId")
+        )
+        logger.info(
+            f"[proxy:StartVoiceChat] session_id from header: {session_id}, http_headers keys: {list((http_headers or {}).keys())}"
+        )
+        if session_id:
+            extra_header = body.setdefault("Config", {}).setdefault("ExtraHeader", {})
+            extra_header["session_id"] = session_id
 
         if custom_system_messages:
             llm_config = body.setdefault("Config", {}).setdefault("LLMConfig", {})

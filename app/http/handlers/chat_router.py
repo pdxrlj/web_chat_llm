@@ -30,8 +30,19 @@ class NLAIChatRequest(BaseModel):
 
 @router.post("/chat/completions")
 async def chat(request: Request, nl_request: NLAIChatRequest):
-    # 从请求头获取 session_id（必填）
+
+    # 打印请求所有的头部参数
+    for key, value in request.headers.items():
+        logger.info(f"[/chat/completions] Request header - {key}: {value}")
+
     session_id = request.headers.get("session_id")
+
+    if not session_id:
+        authorization = request.headers.get("authorization", "")
+        if authorization.startswith("Bearer "):
+            session_id = authorization[len("Bearer ") :]
+        else:
+            session_id = authorization
 
     if not session_id:
         return NlResponse(

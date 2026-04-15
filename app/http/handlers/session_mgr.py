@@ -53,7 +53,7 @@ async def create_session(request: CreateSessionRequest) -> NlResponse:
                 "session_id": session_id,
             },
             status_code=404,
-            message="用户不存在",
+            message="当前用户不存在",
         )
     await add_user_session_id(username=username, session_id=session_id)
 

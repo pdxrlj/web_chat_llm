@@ -9,7 +9,6 @@ rclone copy "$LOCAL_DIR" "$REMOTE_DIR" \
   --exclude '__pycache__/**' \
   --exclude 'node_modules/**' \
   --exclude '*.egg-info/**' \
-  --exclude 'models/**' \
   --exclude '*.pyc' \
   --exclude 'sync_watch.py' \
   --exclude 'sync_to_dev.sh' \

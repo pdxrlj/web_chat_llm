@@ -16,7 +16,9 @@
     "RoomId": "ChatRoom04",
     "TaskId": "ChatTask04",
     "AgentConfig": {
-      "TargetUserId": ["Huoshan04"],
+      "TargetUserId": [
+        "Huoshan04"
+      ],
       "WelcomeMessage": "嘿，我是你的专属健身教练！不管是减脂增肌还是制定训练计划，我都可以帮你。告诉我你的健身目标吧！",
       "UserId": "ChatBot04",
       "EnableConversationStateCallback": true
@@ -47,8 +49,8 @@
       },
       "LLMConfig": {
         "Mode": "CustomLLM",
-        "ModelName": "nlchat",
-        "Url": "https://chat.zhenyekeji.com/chatapi/v1/chat/completions",
+        "ModelName": "chat",
+        "Url": "https://ai.ipai.fans/chatweb/v1/chat/completions",
         "SystemMessages": [
           "你是一名专业的健身教练，拥有运动医学知识和丰富的训练经验。你能够根据用户的身体状况、目标和时间制定个性化的训练和饮食计划。你的风格积极、热情、有激励性，善于用简单易懂的方式解释运动原理。注意安全第一，遇到涉及医疗问题时建议用户咨询医生。"
         ],

@@ -8,7 +8,7 @@
 from pathlib import Path
 from typing import Any
 
-from fastapi import Query
+from fastapi import Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -31,6 +31,7 @@ class ProxyRequest(BaseModel):
     RoomId: str | None = Field(None, description="房间 ID，来自 getScenes 返回值")
     UserId: str | None = Field(None, description="用户 ID，来自 getScenes 返回值")
     AppId: str | None = Field(None, description="应用 ID，来自 getScenes 返回值")
+    SessionId: str | None = Field(None, description="会话 ID")
     TaskId: str | None = Field(None, description="任务 ID，来自 StartVoiceChat 返回值")
     CustomLLMParams: dict[str, Any] | None = None
     CustomHeaders: dict[str, str] | None = None
@@ -82,6 +83,7 @@ def _error_response(api_name: str, message: str) -> JSONResponse:
 
 @router.post("/proxy")
 async def proxy_handler(
+    req: Request,
     request: ProxyRequest,
     Action: str = Query(
         ..., description="OpenAPI Action，如 StartVoiceChat、StopVoiceChat"
@@ -97,16 +99,6 @@ async def proxy_handler(
     - containResponseMetadata=false，直接返回火山 API 原始结果
     """
 
-    # 完整输出请求信息
-    logger.info(
-        f"proxy 请求参数: Action={Action}, Version={Version}, "
-        f"SceneID={request.SceneID}, AppId={request.AppId}, "
-        f"RoomId={request.RoomId}, UserId={request.UserId}, TaskId={request.TaskId}, "
-        f"CustomLLMParams={request.CustomLLMParams}, "
-        f"CustomHeaders={request.CustomHeaders}, "
-        f"CustomSystemMessages={request.CustomSystemMessages}"
-    )
-
     try:
         result = await proxy_voice_api(
             action=Action,
@@ -114,6 +106,7 @@ async def proxy_handler(
             scene_id=request.SceneID,
             request_body=request.model_dump(),
             scenes_dir=SCENES_DIR,
+            http_headers=dict(req.headers),
         )
         return _success_response("proxy", result, contain_response_metadata=False)
     except (ValueError, Exception) as e:
