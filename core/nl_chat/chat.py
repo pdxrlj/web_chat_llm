@@ -12,9 +12,10 @@ from pydantic import SecretStr
 from typing import Any, AsyncGenerator, Optional
 from pathlib import Path
 
+from core.nl_chat.middlewares.change_role import ChangeRoleMiddleware
 from core.nl_chat.middlewares.emotion_speculate import EmotionSpeculateMiddleware
 from core.nl_chat.middlewares.chat_topic import ChatTopicMiddleware
-from core.nl_chat.prompt_mgr import get_session_prompt
+from core.nl_chat.prompt_mgr import get_session_prompt, reset_session_prompt
 from core.nl_chat.tools.memory_search import search_memory
 from core.nl_chat.tools.read_file import read_file
 from core.nl_chat.tools.system_tools import get_all_system_tools
@@ -139,12 +140,11 @@ class ChatAgent:
 
         return ChatOpenAI(**chat_kwargs)
 
-    def _create_agent(self, model: str, session_id: str) -> Any:
+    def _create_agent(self, model: str) -> Any:
         """创建或获取 Agent 实例
 
         Args:
             model: 模型名称
-            session_id: 会话ID
 
         Returns:
             CompiledStateGraph 实例
@@ -164,15 +164,18 @@ class ChatAgent:
 
         chat_topic_middleware = ChatTopicMiddleware()
 
+        change_role_middleware = ChangeRoleMiddleware()
+
         agent = create_agent(
             model=llm,
             tools=self.tools,
-            system_prompt=get_session_prompt(session_id),
+            system_prompt="",
             middleware=[
                 summarization_middleware,
                 emotion_speculate_middleware,
                 chat_topic_middleware,
                 DebugPromptMiddleware(),
+                change_role_middleware,
             ],
             state_schema=ChatAgentState,
             checkpointer=self._checkpointer,
@@ -202,39 +205,49 @@ class ChatAgent:
         start_time = time.perf_counter()
 
         # 1. 自动搜索相关记忆
-        memory_start = time.perf_counter()
-        memory_results = await self.memory_client.search(
-            query=question, user_id=session_id, top_k=5
-        )
-        memory_time = time.perf_counter() - memory_start
-
         memory_context = ""
-        if memory_results["results"]:
-            memory_context = "\n".join(
-                [f"- {r['content']}" for r in memory_results["results"][:5]]
+        try:
+            memory_start = time.perf_counter()
+            memory_results = await self.memory_client.search(
+                query=question, user_id=session_id, top_k=5
             )
+            memory_time = time.perf_counter() - memory_start
 
-        logger.info(f"{'='*60}")
-        logger.info(
-            f"📝 记忆搜索结果 (耗时: {memory_time:.3f}s, 结果数: {memory_results['total']})"
-        )
-        logger.info(f"{'='*60}")
-        if memory_results["results"]:
-            for i, r in enumerate(memory_results["results"], 1):
-                score = r.get("score", 0)
-                content = r.get("content", "")
-                logger.info(
-                    f"  [{i}] (相似度: {score:.4f}) {content[:100]}{'...' if len(content) > 100 else ''}"
+            search_results = memory_results.get("results", [])
+            if search_results:
+                memory_context = "\n".join(
+                    [f"- {r['content']}" for r in search_results[:5]]
                 )
-        else:
-            logger.info("  (无结果)")
-        logger.info(f"{'='*60}")
+
+            logger.info(f"{'='*60}")
+            logger.info(
+                f"📝 记忆搜索结果 (耗时: {memory_time:.3f}s, 结果数: {memory_results.get('total', 0)})"
+            )
+            logger.info(f"{'='*60}")
+            if search_results:
+                for i, r in enumerate(search_results, 1):
+                    score = r.get("score", 0)
+                    content = r.get("content", "")
+                    logger.info(
+                        f"  [{i}] (相似度: {score:.4f}) {content[:100]}{'...' if len(content) > 100 else ''}"
+                    )
+            else:
+                logger.info("  (无结果)")
+            logger.info(f"{'='*60}")
+        except Exception as e:
+            logger.error(f"记忆搜索失败，将跳过记忆上下文: {e}")
 
         # 2. 创建或获取 Agent
-        agent = self._create_agent(model, session_id)
+        agent = self._create_agent(model)
 
         # 3. 构建输入消息
         messages: list[BaseMessage] = []
+
+        # 动态注入当前 session 的 system prompt
+        # create_agent 的 system_prompt 设为空串，由这里统一注入以支持角色切换后 prompt 更新
+        session_prompt = get_session_prompt(session_id)
+        if session_prompt:
+            messages.append(SystemMessage(content=session_prompt))
 
         if memory_context:
             messages.append(
@@ -378,14 +391,12 @@ class ChatAgent:
         try:
             logger.info(f"开始异步保存记忆 - session: {session_id}")
 
-            memory_client = nl_memory.client()
-
             messages = [
                 {"role": "user", "content": question},
                 {"role": "assistant", "content": response},
             ]
 
-            result = await memory_client.add(
+            result = await self.memory_client.add(
                 messages=messages,
                 user_id=session_id,
                 session_id=session_id,
@@ -416,6 +427,16 @@ class ChatAgent:
         Args:
             session_id: 会话ID
         """
-        self._checkpointer = MemorySaver()
-        self._agents.clear()
+        # 只清空指定 session 的 checkpointer，不影响其他会话
+        reset_session_prompt(session_id)
+        try:
+            self._checkpointer.delete_thread(session_id)
+        except (AttributeError, NotImplementedError):
+            # MemorySaver 可能不支持 delete_thread，则重建 checkpointer
+            # 旧 agent 持有已失效的 checkpointer 引用，必须一并清空
+            logger.warning(
+                f"MemorySaver 不支持按 session 删除，将重建 checkpointer（影响所有会话）- session_id: {session_id}"
+            )
+            self._checkpointer = MemorySaver()
+            self._agents.clear()
         logger.info(f"会话历史已清空 - session_id: {session_id}")

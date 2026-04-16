@@ -36,11 +36,11 @@
         "Provider": "volcano",
         "ProviderParams": {
           "app": {
-            "appid": "9953330822",
+            "appid": "3913556231",
             "cluster": "volcano_tts"
           },
           "audio": {
-            "voice_type": "BV701_streaming",
+            "voice_type": "zh_female_meilinvyou_moon_bigtts",
             "speed_ratio": 1.05,
             "pitch_ratio": 1,
             "volume_ratio": 1

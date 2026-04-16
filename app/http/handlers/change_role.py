@@ -26,12 +26,22 @@ class ChangeRoleRequest(BaseModel):
     """角色变更请求。"""
 
     session_id: str = Field(..., description="会话 ID（UUID），用于定位运行时状态")
-    voice_type: str = Field(..., description="音色 ID，如 zh_female_wanqudashu_moon_bigtts")
-    scene_id: str | None = Field(None, description="场景 ID，不传则从运行时状态自动获取")
+    voice_type: str = Field(
+        ..., description="音色 ID，如 zh_female_wanqudashu_moon_bigtts"
+    )
+    scene_id: str | None = Field(
+        None, description="场景 ID，不传则从运行时状态自动获取"
+    )
     system_prompt: str | None = Field(None, description="系统提示词，不传则保持原值")
-    speed_ratio: float | None = Field(None, description="语速，范围 [0.2, 3]，不传则保持原值")
-    pitch_ratio: float | None = Field(None, description="音高，范围 [0.1, 3]，不传则保持原值")
-    volume_ratio: float | None = Field(None, description="音量，范围 [0.1, 3]，不传则保持原值")
+    speed_ratio: float | None = Field(
+        None, description="语速，范围 [0.2, 3]，不传则保持原值"
+    )
+    pitch_ratio: float | None = Field(
+        None, description="音高，范围 [0.1, 3]，不传则保持原值"
+    )
+    volume_ratio: float | None = Field(
+        None, description="音量，范围 [0.1, 3]，不传则保持原值"
+    )
 
 
 @router.post("/change_role")
@@ -49,7 +59,9 @@ async def change_role(_req: Request, data: ChangeRoleRequest) -> NlResponse:
     scene_id = data.scene_id or (runtime.get("scene_id") if runtime else None)
     if not scene_id:
         return NlResponse(
-            content={}, status_code=400, message="scene_id 无法获取，请先启动语音会话或显式传入"
+            content={},
+            status_code=400,
+            message="scene_id 无法获取，请先启动语音会话或显式传入",
         )
 
     # 2. 更新本地会话的 system prompt

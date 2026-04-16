@@ -28,3 +28,8 @@ def set_session_prompt(
 ) -> None:
     """设置 session_id 对应的 system prompt"""
     _prompt_mgr[session_id] = prompt
+
+
+def reset_session_prompt(session_id: str) -> None:
+    """重置 session_id 对应的 system prompt 为默认值"""
+    _prompt_mgr.pop(session_id, None)
