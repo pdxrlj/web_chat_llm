@@ -77,6 +77,21 @@ class RedisStorageConfig(BaseModel):
 StorageConfig = MilvusStorageConfig | PostgresStorageConfig | RedisStorageConfig
 
 
+class SearchToolConfig(BaseModel):
+    """网络搜索工具配置（SearXNG）"""
+
+    url: str = ""
+    api_key: str = ""
+    language: str = "zh-CN"
+    max_results: int = 5
+
+
+class ToolsConfig(BaseModel):
+    """工具配置"""
+
+    search: SearchToolConfig = Field(default_factory=SearchToolConfig)
+
+
 class Config(BaseModel):
     """主配置类"""
 
@@ -85,6 +100,7 @@ class Config(BaseModel):
     llm: list[LLMConfig] = Field(default_factory=list)
     embedding: list[EmbeddingConfig] = Field(default_factory=list)
     storage: list[StorageConfig] = Field(default_factory=list)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
 
     def get_llm(self, name: str) -> LLMConfig | None:
         """根据名称获取 LLM 配置"""

@@ -75,6 +75,12 @@ llm:
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     api_key: "sk-0c6357bf1aad4ad5a38a309e0e1af404"
 
+  - name: profile
+    model: qwen3.5-flash
+    model_provider: openai
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key: "sk-0c6357bf1aad4ad5a38a309e0e1af404"
+
 embedding:
   - name: ollama
     model: nomic-embed-text:latest
@@ -111,3 +117,10 @@ storage:
     port: 6379
     username: ""
     password: ""
+
+tools:
+  search:
+    url: http://112.132.224.74:3180
+    api_key: b55ee551866c1461117c4fb0a0a7ab6a5f209b00140d7daacc23046aaf8e56ad
+    language: zh-CN
+    max_results: 5

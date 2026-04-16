@@ -4,6 +4,7 @@
 对应 JS 版 app.js 中 proxy 和 getScenes 两个路由逻辑。
 """
 
+import asyncio
 import copy
 import hashlib
 import hmac
@@ -17,6 +18,7 @@ from typing import Any
 import aiohttp
 
 from core.logger import setup_logger
+from core.voice_server.chat_analyze import AnalyzeAgent
 from core.voice_server.scene_loader import load_scenes
 from core.voice_server.token import AccessToken, Privileges
 
@@ -310,7 +312,9 @@ async def start_voice_chat(
     _, account_config, voice_chat = _resolve_scene(scenes_dir, scene_id)
     session_id = (http_headers or {}).get("session_id") or request_body.get("SessionId")
 
-    body = _build_start_voice_chat_body(voice_chat, request_body, session_id, http_headers)
+    body = _build_start_voice_chat_body(
+        voice_chat, request_body, session_id, http_headers
+    )
     result = await _send_voice_request("StartVoiceChat", version, body, account_config)
     _handle_start_voice_chat_result(result, body, session_id, scene_id)
 
@@ -318,6 +322,10 @@ async def start_voice_chat(
 
 
 # ── StopVoiceChat ──────────────────────────────────────────────────
+
+from core.voice_server.chat_analyze import AnalyzeAgent
+
+analyze_agent = AnalyzeAgent()
 
 
 def _build_stop_voice_chat_body(
@@ -332,19 +340,13 @@ def _build_stop_voice_chat_body(
     # 其次使用运行时状态（StartVoiceChat 保存的参数）
     # 最后 fallback 到缓存原始值
     app_id = (
-        request_body.get("AppId")
-        or runtime.get("app_id")
-        or voice_chat.get("AppId")
+        request_body.get("AppId") or runtime.get("app_id") or voice_chat.get("AppId")
     )
     room_id = (
-        request_body.get("RoomId")
-        or runtime.get("room_id")
-        or voice_chat.get("RoomId")
+        request_body.get("RoomId") or runtime.get("room_id") or voice_chat.get("RoomId")
     )
     task_id = (
-        request_body.get("TaskId")
-        or runtime.get("task_id")
-        or voice_chat.get("TaskId")
+        request_body.get("TaskId") or runtime.get("task_id") or voice_chat.get("TaskId")
     )
     _assert(app_id, "VoiceChat.AppId 不能为空")
     _assert(room_id, "VoiceChat.RoomId 不能为空")
@@ -357,18 +359,26 @@ def _build_stop_voice_chat_body(
     return {"AppId": app_id, "RoomId": room_id, "TaskId": task_id}
 
 
-def _handle_stop_voice_chat_result(
+async def _handle_stop_voice_chat_result(
     result: dict[str, Any],
     session_id: str | None,
 ) -> None:
-    """处理 StopVoiceChat 响应：成功时清除运行时状态。"""
+    """处理 StopVoiceChat 响应：成功时清除运行时状态，并触发聊天分析。"""
     if result.get("Result") != "ok":
         return
 
     if session_id and session_id in _runtime_state:
         del _runtime_state[session_id]
         logger.info(f"[StopVoiceChat] 已清除运行时状态: session_id={session_id}")
+        # 异步触发聊天分析（后台执行，不阻塞主流程）
+        async def _run_analyze() -> None:
+            try:
+                agent = AnalyzeAgent()
+                await agent.analyze(session_id)
+            except Exception as e:
+                logger.error(f"[StopVoiceChat] 聊天分析失败: {e}")
 
+        asyncio.create_task(_run_analyze())
 
 async def stop_voice_chat(
     version: str,
@@ -383,8 +393,8 @@ async def stop_voice_chat(
 
     body = _build_stop_voice_chat_body(voice_chat, request_body, session_id)
     result = await _send_voice_request("StopVoiceChat", version, body, account_config)
-    _handle_stop_voice_chat_result(result, session_id)
-    
+    await _handle_stop_voice_chat_result(result, session_id)
+
     return result
 
 

@@ -21,6 +21,7 @@ from core.nl_chat.tools.memory_search import search_memory
 from core.nl_chat.tools.read_file import read_file
 from core.nl_chat.tools.system_tools import get_all_system_tools
 from core.nl_chat.tools.skills_tool import create_skills_tool
+from core.nl_chat.tools.web_search import web_search
 from .middlewares import SummarizationMiddleware, DebugPromptMiddleware
 import asyncio
 import time
@@ -93,10 +94,11 @@ class ChatAgent:
         # 系统工具（文件管理 + Shell）
         system_tools = get_all_system_tools()
 
-        # 注册的工具列表（包含 activate_skill）
+        # 注册的工具列表（包含 activate_skill + web_search）
         self.tools: list[BaseTool] = [
             search_memory,
             read_file,
+            web_search,
             self._skills_tool,
         ] + system_tools
 
