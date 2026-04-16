@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 # ======================== 文件管理工具 ========================
 
+
 @tool
 def file_read(file_path: str) -> str:
     """读取文件内容。
@@ -29,7 +30,10 @@ def file_read(file_path: str) -> str:
         content = path.read_text(encoding="utf-8")
         # 截断过大文件
         if len(content) > 50000:
-            content = content[:50000] + f"\n... (文件过大，已截断，总长度: {len(content)} 字符)"
+            content = (
+                content[:50000]
+                + f"\n... (文件过大，已截断，总长度: {len(content)} 字符)"
+            )
         return content
     except Exception as e:
         return f"读取文件失败: {e}"
@@ -141,13 +145,14 @@ def file_delete(file_path: str) -> str:
 
 # ======================== Shell 工具 ========================
 
+
 @tool
-def shell_execute(command: str, timeout: int = 3) -> str:
+def shell_execute(command: str, timeout: int = 10) -> str:
     """执行Shell命令并返回输出。
 
     Args:
         command: 要执行的Shell命令
-        timeout: 超时时间（秒），默认3秒
+        timeout: 超时时间（秒），默认10秒
 
     Returns:
         命令的标准输出和标准错误
@@ -186,7 +191,9 @@ def shell_execute(command: str, timeout: int = 3) -> str:
 
         # 截断过长输出
         if len(output) > 10000:
-            output = output[:10000] + f"\n... (输出过长，已截断，总长度: {len(output)} 字符)"
+            output = (
+                output[:10000] + f"\n... (输出过长，已截断，总长度: {len(output)} 字符)"
+            )
 
         return output + exit_info
     except subprocess.TimeoutExpired:
@@ -196,6 +203,7 @@ def shell_execute(command: str, timeout: int = 3) -> str:
 
 
 # ======================== 工具集合 ========================
+
 
 def get_file_management_tools():
     """获取文件管理工具列表（等价于 langchain_community 的 FileManagementToolkit）"""

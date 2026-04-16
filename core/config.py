@@ -83,7 +83,7 @@ class SearchToolConfig(BaseModel):
     url: str = ""
     api_key: str = ""
     language: str = "zh-CN"
-    max_results: int = 5
+    max_results: int = 15
 
 
 class ToolsConfig(BaseModel):

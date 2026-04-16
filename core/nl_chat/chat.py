@@ -1,3 +1,4 @@
+from email import message
 from core.logger import setup_logger
 from core.memory import nl_memory
 from core.config import config
@@ -7,6 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from langchain.agents.middleware.types import AgentState
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphRecursionError
 
 from pydantic import SecretStr
 from typing import Any, AsyncGenerator, NotRequired, Optional
@@ -21,12 +23,12 @@ from core.nl_chat.tools.memory_search import search_memory
 from core.nl_chat.tools.read_file import read_file
 from core.nl_chat.tools.system_tools import get_all_system_tools
 from core.nl_chat.tools.skills_tool import create_skills_tool
-from core.nl_chat.tools.web_search import web_search
 from .middlewares import SummarizationMiddleware, DebugPromptMiddleware
 import asyncio
-import time
 import json
+import time
 import uuid
+from datetime import datetime
 
 logger = setup_logger(__name__)
 
@@ -44,6 +46,20 @@ def _utf8_default_read_text(self, encoding="utf-8", errors=None, newline=None):
 
 
 Path.read_text = _utf8_default_read_text  # type: ignore[assignment]
+
+
+# 技能提示映射
+_SKILL_HINTS: dict[str, str] = {
+    "web-search": "🔍 正在搜索互联网...\n",
+    "web-scraper": "🌐 正在抓取网页内容...\n",
+    "calculator": "🧮 正在计算...\n",
+    "file-manager": "📁 正在处理文件...\n",
+}
+
+
+def _skill_hint(skill_name: str) -> str:
+    """根据技能名返回即时提示文本。"""
+    return _SKILL_HINTS.get(skill_name, "🎯 正在使用技能，请稍等...\n")
 
 
 class ChatAgentState(AgentState):
@@ -94,11 +110,10 @@ class ChatAgent:
         # 系统工具（文件管理 + Shell）
         system_tools = get_all_system_tools()
 
-        # 注册的工具列表（包含 activate_skill + web_search）
+        # 注册的工具列表（包含 activate_skill）
         self.tools: list[BaseTool] = [
             search_memory,
             read_file,
-            web_search,
             self._skills_tool,
         ] + system_tools
 
@@ -255,6 +270,16 @@ class ChatAgent:
         if session_prompt:
             messages.append(SystemMessage(content=session_prompt))
 
+        # 注入当前时间信息
+        now = datetime.now()
+        time_info = f"当前时间: {now.strftime('%Y年%m月%d日 %H时%M分%S秒')} (星期{'一二三四五六日'[now.weekday()]})"
+        messages.append(SystemMessage(content=time_info))
+        messages.append(
+            SystemMessage(
+                content="不要输出任何markdown格式的内容,只输出普通文本,不能包含任何特殊字符"
+            )
+        )
+
         if memory_context:
             messages.append(
                 SystemMessage(content=f"关于这个用户，你知道：\n{memory_context}")
@@ -297,55 +322,110 @@ class ChatAgent:
         _BOLD = "\033[1m"
         _RESET = "\033[0m"
 
-        async for event in agent.astream_events(
-            {"messages": messages, "session_id": session_id},
-            config=config_dict,
-            version="v2",
-        ):
-            kind = event.get("event")
+        try:
+            async for event in agent.astream_events(
+                {"messages": messages, "session_id": session_id},
+                config=config_dict,
+                version="v2",
+            ):
+                kind = event.get("event")
 
-            # 检测工具调用 → 识别 Skill 使用
-            if kind == "on_tool_start":
-                tool_name = event.get("name", "")
-                tool_input = event.get("data", {}).get("input", {})
-                if tool_name == "activate_skill":
-                    skill_name = (
-                        tool_input.get("name", "")
-                        if isinstance(tool_input, dict)
-                        else ""
-                    )
-                    if skill_name and skill_name not in used_skills:
-                        used_skills.add(skill_name)
-                        logger.info(f"{_CYAN}{_BOLD}🎯 使用技能: {skill_name}{_RESET}")
+                # 检测工具调用 → 识别 Skill 使用，并即时推送提示
+                if kind == "on_tool_start":
+                    tool_name = event.get("name", "")
+                    tool_input = event.get("data", {}).get("input", {})
+                    if tool_name == "activate_skill":
+                        skill_name = (
+                            tool_input.get("name", "")
+                            if isinstance(tool_input, dict)
+                            else ""
+                        )
+                        if skill_name and skill_name not in used_skills:
+                            used_skills.add(skill_name)
+                            logger.info(f"{_CYAN}{_BOLD}🎯 使用技能: {skill_name}{_RESET}")
+                            # 即时推送"正在处理"提示
+                            hint = _skill_hint(skill_name)
+                            if hint:
+                                hint_chunk = {
+                                    "id": completion_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_timestamp,
+                                    "model": model,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "delta": {"content": hint},
+                                            "finish_reason": None,
+                                        }
+                                    ],
+                                }
+                                yield f"data: {json.dumps(hint_chunk, ensure_ascii=False)}\n\n"
+                                full_response_content += hint
+                    elif tool_name == "shell_execute":
+                        # shell 工具调用时推送处理提示
+                        hint_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_timestamp,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": "⏳ 正在执行...\n"},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        yield f"data: {json.dumps(hint_chunk, ensure_ascii=False)}\n\n"
+                        full_response_content += "⏳ 正在执行...\n"
 
-            if kind == "on_chat_model_stream":
-                content = event.get("data", {}).get("chunk", {})
+                if kind == "on_chat_model_stream":
+                    content = event.get("data", {}).get("chunk", {})
 
-                if hasattr(content, "content"):
-                    chunk_content = content.content
-                elif isinstance(content, dict):
-                    chunk_content = content.get("content", "")
-                else:
-                    chunk_content = str(content)
+                    if hasattr(content, "content"):
+                        chunk_content = content.content
+                    elif isinstance(content, dict):
+                        chunk_content = content.get("content", "")
+                    else:
+                        chunk_content = str(content)
 
-                if chunk_content:
-                    full_response_content += chunk_content
+                    if chunk_content:
+                        full_response_content += chunk_content
 
-                    chunk_data = {
-                        "id": completion_id,
-                        "object": "chat.completion.chunk",
-                        "created": created_timestamp,
-                        "model": model,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": chunk_content},
-                                "finish_reason": None,
-                            }
-                        ],
+                        chunk_data = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_timestamp,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": chunk_content},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+
+                        yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+        except GraphRecursionError:
+            logger.warning(f"Agent 递归次数超限 (session: {session_id})，返回已有内容")
+            # 推送提示消息
+            fallback_msg = "\n抱歉，处理过程过于复杂，我暂时无法完成这个请求，请简化问题后重试。"
+            fallback_chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created_timestamp,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": fallback_msg},
+                        "finish_reason": None,
                     }
-
-                    yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+                ],
+            }
+            yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
+            full_response_content += fallback_msg
 
         # 发送结束标记
         finish_chunk = {
