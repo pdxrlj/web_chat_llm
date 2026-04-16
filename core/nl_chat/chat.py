@@ -9,11 +9,12 @@ from langchain.agents.middleware.types import AgentState
 from langgraph.checkpoint.memory import MemorySaver
 
 from pydantic import SecretStr
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, NotRequired, Optional
 from pathlib import Path
 
 from core.nl_chat.middlewares.change_role import ChangeRoleMiddleware
 from core.nl_chat.middlewares.emotion_speculate import EmotionSpeculateMiddleware
+from core.nl_chat.middlewares.chat_history_saver import ChatHistorySaverMiddleware
 from core.nl_chat.middlewares.chat_topic import ChatTopicMiddleware
 from core.nl_chat.prompt_mgr import get_session_prompt, reset_session_prompt
 from core.nl_chat.tools.memory_search import search_memory
@@ -45,7 +46,7 @@ Path.read_text = _utf8_default_read_text  # type: ignore[assignment]
 
 
 class ChatAgentState(AgentState):
-    """自定义 Agent State，扩展 session_id 字段供中间件使用"""
+    """自定义 Agent State，扩展字段供中间件使用"""
 
     session_id: str
 
@@ -162,6 +163,8 @@ class ChatAgent:
 
         emotion_speculate_middleware = EmotionSpeculateMiddleware()
 
+        chat_history_saver_middleware = ChatHistorySaverMiddleware()
+
         chat_topic_middleware = ChatTopicMiddleware()
 
         change_role_middleware = ChangeRoleMiddleware()
@@ -173,6 +176,7 @@ class ChatAgent:
             middleware=[
                 summarization_middleware,
                 emotion_speculate_middleware,
+                chat_history_saver_middleware,
                 chat_topic_middleware,
                 DebugPromptMiddleware(),
                 change_role_middleware,

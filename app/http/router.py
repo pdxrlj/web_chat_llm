@@ -15,6 +15,7 @@ from app.http.response import NlResponse
 from core.config import PostgresStorageConfig
 from core.logger import setup_logger
 from core.model.base import close, conn, migrate
+import core.model.chat_history
 
 logger = setup_logger("lifespan")
 

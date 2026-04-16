@@ -2,7 +2,7 @@ from app.http.handlers.base import router
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 from app.http.response import NlResponse
-from core.nl_chat.middlewares.emotion_speculate import message_bus
+from core.nl_chat.middlewares.common import message_bus
 import asyncio
 import logging
 from typing import Dict, Set, AsyncGenerator

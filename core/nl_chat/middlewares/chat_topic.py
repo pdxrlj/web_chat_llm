@@ -5,11 +5,9 @@ from langchain.agents import AgentState
 from langgraph.runtime import Runtime
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage
-from pydantic import Field, BaseModel, SecretStr
-from core.config import LLMConfig, config
+from pydantic import Field, BaseModel
 from core.model.topic_repo import save_chat_topic
-from core.nl_chat.middlewares.emotion_speculate import message_bus
-from langchain_openai import ChatOpenAI
+from core.nl_chat.middlewares.common import message_bus, build_llm_from_config
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -44,24 +42,7 @@ class ChatTopicMiddleware(AgentMiddleware):
 
     def __init__(self):
         self.cache: list[BaseMessage] = []
-        self.topic_llm_config = config.get_llm("topic")
-        if not self.topic_llm_config:
-            raise ValueError("topic LLM 配置不存在")
-
-    def _topic_llm(self):
-        if not isinstance(self.topic_llm_config, LLMConfig):
-            raise TypeError("topic LLM 配置类型错误")
-
-        topic_config = {
-            "model": self.topic_llm_config.model,
-            "base_url": self.topic_llm_config.base_url,
-            "temperature": 0.1,
-            "extra_body": {"enable_thinking": False},
-        }
-        if self.topic_llm_config.api_key:
-            topic_config["api_key"] = SecretStr(self.topic_llm_config.api_key)
-
-        return ChatOpenAI(**topic_config)
+        self._llm = build_llm_from_config("topic", temperature=0.1)
 
     def _topic_prompt(
         self, user_question: list[BaseMessage]
@@ -105,7 +86,7 @@ class ChatTopicMiddleware(AgentMiddleware):
             if messages is None:
                 return
 
-            topic_llm = self._topic_llm()
+            topic_llm = self._llm
             with warnings.catch_warnings():
                 warnings.filterwarnings(
                     "ignore",

@@ -1,23 +1,23 @@
 import warnings
 from copy import deepcopy
-from pathlib import Path
 from typing import Any
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field
 
-from core.config import LLMConfig, config
 from core.logger import setup_logger
+from core.nl_chat.middlewares.common import (
+    SCENES_DIR,
+    message_bus,
+    build_llm_from_config,
+)
 from core.nl_chat.prompt_mgr import set_session_prompt
 from core.voice_server.update_chat_config import update_voice_chat
 
 logger = setup_logger("change_role_middleware")
-
-SCENES_DIR = str(Path(__file__).parent.parent.parent / "voice_server" / "scenes")
 
 ROLE_JUDGE_PROMPT = """你是一个角色意图识别器。根据用户输入，判断用户想切换到哪个角色。
 
@@ -192,29 +192,14 @@ class ChangeRoleMiddleware(AgentMiddleware):
             session_id: 会话 ID，优先从 AgentState 获取，此处作为备选传入
         """
         self.session_id = session_id
-        self.judge_llm_config = config.get_llm("intention")
-        if not self.judge_llm_config:
+        try:
+            self._llm = build_llm_from_config("intention", temperature=0.1)
+            self._llm_disabled = False
+        except (ValueError, TypeError):
             logger.warning(
                 "intention LLM 配置不存在，ChangeRoleMiddleware 将仅使用热词匹配（LLM 判断已禁用）"
             )
             self._llm_disabled = True
-        else:
-            self._llm_disabled = False
-
-    def _judge_llm(self) -> ChatOpenAI:
-        if not isinstance(self.judge_llm_config, LLMConfig):
-            raise TypeError("intention LLM 配置类型错误")
-
-        judge_config = {
-            "model": self.judge_llm_config.model,
-            "base_url": self.judge_llm_config.base_url,
-            "temperature": 0.1,
-            "extra_body": {"enable_thinking": False},
-        }
-        if self.judge_llm_config.api_key:
-            judge_config["api_key"] = SecretStr(self.judge_llm_config.api_key)
-
-        return ChatOpenAI(**judge_config)
 
     async def _judge_role_by_llm(self, user_input: str) -> str | None:
         """用 LLM 判断用户输入想切换到哪个角色。
@@ -232,7 +217,7 @@ class ChangeRoleMiddleware(AgentMiddleware):
                 HumanMessage(content=user_input),
             ]
 
-            llm = self._judge_llm()
+            llm = self._llm
             with warnings.catch_warnings():
                 warnings.filterwarnings(
                     "ignore",
@@ -316,6 +301,9 @@ class ChangeRoleMiddleware(AgentMiddleware):
                 },
                 scenes_dir=SCENES_DIR,
             )
+            # 更新运行时状态中的 scene_id，确保 get_role_name() 能获取到正确的角色名称
+            voice_api._runtime_state.setdefault(session_id, {})["scene_id"] = scene_id
+
             logger.info(
                 f"角色切换成功: session={session_id}, "
                 f"role={role_name}, scene_id={scene_id}, "
@@ -363,8 +351,6 @@ class ChangeRoleMiddleware(AgentMiddleware):
         success = await self._apply_role_change(session_id, role_name)
         if success:
             # 切换成功，通过消息总线通知前端
-            from core.nl_chat.middlewares.emotion_speculate import message_bus
-
             message_bus.send(
                 "ChangeRoleMiddleware",
                 message={

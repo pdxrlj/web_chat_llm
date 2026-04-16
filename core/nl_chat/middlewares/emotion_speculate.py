@@ -1,30 +1,23 @@
-from blinker import signal
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from core.model.emotion_speculate_repo import add_emotion_speculate
 from langgraph.runtime import Runtime
-from pydantic import SecretStr
-from core.config import config, LLMConfig
 from core.logger import setup_logger
-from typing import Any, Optional
-from langchain_openai import ChatOpenAI
+from typing import Any
 from pydantic import BaseModel, Field
 import asyncio
+
+from core.nl_chat.middlewares.common import (
+    message_bus,
+    get_role_name,
+    get_latest_human_message,
+    build_llm_from_config,
+)
 
 logger = setup_logger(__name__)
 
 
-message_bus = signal("we_chat")
-
-
-# @message_bus.connect
-# def on_message(sender, message: dict):
-#     """
-#     处理消息事件
-#     :param sender: 发送者
-#     :param message: 消息内容
-#     """
-#     print(f"收到消息: {message}")
 class EmotionAnalysisResult(BaseModel):
     """情绪分析结果模型。"""
 
@@ -50,26 +43,7 @@ EMOTION_ANALYSIS_PROMPT = """/nothink 你是一个专业的情绪分析师。请
 
 class EmotionSpeculateMiddleware(AgentMiddleware):
     def __init__(self):
-        self.emotion_llm_config = config.get_llm("emotion")
-        if not self.emotion_llm_config:
-            raise ValueError("emotion LLM 配置不存在")
-
-    def _emotion_llm(self):
-        # 构建参数，确保类型安全
-        if not isinstance(self.emotion_llm_config, LLMConfig):
-            raise TypeError("emotion LLM 配置类型错误")
-
-        chat_kwargs = {
-            "model": self.emotion_llm_config.model,
-            "base_url": self.emotion_llm_config.base_url,
-            "temperature": 0.7,
-            "extra_body": {"enable_thinking": False},
-        }
-
-        if self.emotion_llm_config.api_key:
-            chat_kwargs["api_key"] = SecretStr(self.emotion_llm_config.api_key)
-
-        return ChatOpenAI(**chat_kwargs)
+        self._llm = build_llm_from_config("emotion", temperature=0.7)
 
     def _emotion_prompt(self, user_question: str) -> list[BaseMessage]:
         messages = [
@@ -93,10 +67,9 @@ class EmotionSpeculateMiddleware(AgentMiddleware):
 
             # 构建消息和 LLM
             messages = self._emotion_prompt(user_question)
-            llm = self._emotion_llm()
 
             # 直接使用传统方法（NLEmotion 模型不支持 Function Calling）
-            response = await llm.agenerate([messages])
+            response = await self._llm.agenerate([messages])
             response_text = response.generations[0][0].text
 
             # 检查响应是否为空
@@ -136,14 +109,26 @@ class EmotionSpeculateMiddleware(AgentMiddleware):
 
             logger.info(f"✅ 情感分析结果 (session: {session_id}): {analysis_result}")
 
+            emotion_data = analysis_result.model_dump()
             message_bus.send(
                 "EmotionSpeculateMiddleware",
                 message={
                     "type": "emotion",
                     "session_id": session_id,
-                    "emotion_analysis": analysis_result.model_dump(),
+                    "emotion_analysis": emotion_data,
                 },
             )
+
+            # 直接存储到数据库
+
+            role = get_role_name(session_id)
+            await add_emotion_speculate(
+                session_id=session_id,
+                role=role,
+                query=user_question,
+                emotion=emotion_data,
+            )
+            logger.info(f"💾 情感分析记录已保存 (session: {session_id})")
 
         except Exception as e:
             logger.error(f"❌ 情感分析失败 (session: {session_id}): {e}", exc_info=True)
@@ -155,18 +140,7 @@ class EmotionSpeculateMiddleware(AgentMiddleware):
         session_id = state.get("session_id", "unknown")
         logger.info(f"[开始处理会话: {session_id}]")
         messages = state.get("messages", [])
-        user_question: Optional[str] = None
-
-        # 从后往前找最新的 HumanMessage
-        for msg in reversed(messages):
-            if isinstance(msg, HumanMessage):
-                # 处理 content 可能是字符串或列表的情况
-                if isinstance(msg.content, str):
-                    user_question = msg.content
-                else:
-                    # 如果是列表，转换为字符串
-                    user_question = str(msg.content)
-                break
+        user_question = get_latest_human_message(messages)
 
         if user_question is None:
             logger.warning("未找到用户消息")

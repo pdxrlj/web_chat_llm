@@ -4,117 +4,17 @@
 在对话进行中的任何时刻发送实时任务指令或更新任务配置。
 """
 
-import hashlib
-import hmac
 import json
-from datetime import datetime, timezone
 from typing import Any
 
-import aiohttp
-
 from core.logger import setup_logger
+from core.voice_server.voice_api import (
+    _get_http_session,
+    _resolve_scene,
+    _send_voice_request,
+)
 
 logger = setup_logger("update_chat_config")
-
-# 共享 HTTP Session（从 voice_api 共享）
-_http_session: aiohttp.ClientSession | None = None
-
-
-def _get_http_session() -> aiohttp.ClientSession | None:
-    """获取共享 aiohttp ClientSession。"""
-    global _http_session
-    return _http_session
-
-
-def _set_http_session(session: aiohttp.ClientSession | None) -> None:
-    """设置共享 aiohttp ClientSession。"""
-    global _http_session
-    _http_session = session
-
-
-# ── 火山 OpenAPI V4 签名（复制自 voice_api） ──────────────────────────
-
-
-def _hmac_sha256(key: bytes, msg: bytes) -> bytes:
-    return hmac.new(key, msg, hashlib.sha256).digest()
-
-
-def _get_signature_key(
-    secret_key: str, date_stamp: str, region: str, service: str
-) -> bytes:
-    k_date = _hmac_sha256(secret_key.encode("utf-8"), date_stamp.encode("utf-8"))
-    k_region = _hmac_sha256(k_date, region.encode("utf-8"))
-    k_service = _hmac_sha256(k_region, service.encode("utf-8"))
-    k_signing = _hmac_sha256(k_service, b"request")
-    return k_signing
-
-
-def _sign_request(
-    method: str,
-    host: str,
-    path: str,
-    query: str,
-    headers: dict[str, str],
-    body: bytes,
-    access_key_id: str,
-    secret_key: str,
-    region: str = "cn-north-1",
-    service: str = "rtc",
-) -> dict[str, str]:
-    """为火山 OpenAPI 请求计算 V4 签名并返回带签名的 headers。"""
-    now = datetime.now(timezone.utc)
-    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
-    date_stamp = now.strftime("%Y%m%d")
-
-    signed_headers_list = ["content-type", "host", "x-content-sha256", "x-date"]
-    payload_hash = hashlib.sha256(body).hexdigest()
-
-    canonical_headers = (
-        f"content-type:{headers.get('content-type', 'application/json')}\n"
-        f"host:{host}\n"
-        f"x-content-sha256:{payload_hash}\n"
-        f"x-date:{amz_date}\n"
-    )
-    signed_headers = ";".join(signed_headers_list)
-
-    canonical_request = "\n".join(
-        [
-            method.upper(),
-            path,
-            query,
-            canonical_headers,
-            signed_headers,
-            payload_hash,
-        ]
-    )
-
-    credential_scope = f"{date_stamp}/{region}/{service}/request"
-    string_to_sign = "\n".join(
-        [
-            "HMAC-SHA256",
-            amz_date,
-            credential_scope,
-            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
-        ]
-    )
-
-    signing_key = _get_signature_key(secret_key, date_stamp, region, service)
-    signature = hmac.new(
-        signing_key, string_to_sign.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
-
-    auth_header = (
-        f"HMAC-SHA256 "
-        f"Credential={access_key_id}/{credential_scope}, "
-        f"SignedHeaders={signed_headers}, "
-        f"Signature={signature}"
-    )
-
-    signed_headers_dict = dict(headers)
-    signed_headers_dict["X-Date"] = amz_date
-    signed_headers_dict["X-Content-Sha256"] = payload_hash
-    signed_headers_dict["Authorization"] = auth_header
-    return signed_headers_dict
 
 
 # ── UpdateVoiceChat 支持的命令 ───────────────────────────────────────
@@ -153,52 +53,16 @@ class PriorityMode:
 # ── UpdateVoiceChat 代理接口 ────────────────────────────────────────
 
 
-async def update_voice_chat(
-    scene_id: str,
+def _build_update_voice_chat_body(
     request_body: dict[str, Any],
-    scenes_dir: str,
+    session_id: str | None,
+    runtime: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    代理火山 RTC UpdateVoiceChat 请求。
-
-    支持以下指令：
-    - interrupt：打断 AI 说话
-    - function：回传工具执行结果（Function Calling）
-    - ExternalTextToSpeech：自定义语音播放（InterruptMode 必填）
-    - ExternalPromptsForLLM：动态传入上下文
-    - ExternalTextToLLM：文本提问（InterruptMode 必填）
-    - FinishSpeechRecognition：触发新一轮对话
-    - UpdateParameters：更新任务配置
-    - SetTTSContext：设置 TTS 指令标签
-    - UpdateVoicePrintSV：更新声纹降噪配置
-    - UpdateFarfieldConfig：更新远场人声抑制配置
-    """
-    from core.voice_server.scene_loader import load_scenes
-
-    scenes = load_scenes(scenes_dir)
-    json_data = scenes.get(scene_id)
-    if not json_data:
-        raise ValueError(f"{scene_id} 不存在, 请先在 scenes 目录下定义该场景的 JSON")
-
-    account_config: dict[str, Any] = json_data.get("AccountConfig", {})
-
-    # 尝试从 session_id 对应的运行时状态获取 AppId/RoomId/TaskId
-    session_id = request_body.get("SessionId")
-    from core.voice_server import voice_api
-
-    runtime = voice_api._runtime_state.get(session_id, {}) if session_id else {}
-
+    """构建 UpdateVoiceChat 请求体，根据 Command 类型填充不同字段。"""
     # 从请求或运行时状态获取必要参数
     app_id = request_body.get("AppId") or runtime.get("app_id")
     room_id = request_body.get("RoomId") or runtime.get("room_id")
     task_id = request_body.get("TaskId") or runtime.get("task_id")
-
-    logger.info(
-        f"[UpdateVoiceChat] 使用账户配置:\n"
-        f"  accessKeyId={account_config['accessKeyId']}\n"
-        f"  请求的 AppId={app_id}\n"
-        f"  scene={scene_id} 的 AppId={json_data.get('VoiceChat', {}).get('AppId')}"
-    )
 
     if not app_id:
         raise ValueError("AppId 不能为空，请先调用 StartVoiceChat")
@@ -315,46 +179,58 @@ async def update_voice_chat(
     else:
         raise ValueError(f"不支持的命令: {command}")
 
-    # 构造火山 OpenAPI 请求
-    host = "rtc.volcengineapi.com"
-    path = "/"
-    version = "2024-12-01"
-    query = f"Action=UpdateVoiceChat&Version={version}"
-    body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
-
-    req_headers = {
-        "Host": host,
-        "Content-Type": "application/json",
-    }
-
-    signed_headers = _sign_request(
-        method="POST",
-        host=host,
-        path=path,
-        query=query,
-        headers=req_headers,
-        body=body_bytes,
-        access_key_id=account_config["accessKeyId"],
-        secret_key=account_config["secretKey"],
+    logger.info(
+        f"[UpdateVoiceChat] command={command}, "
+        f"AppId={app_id}, RoomId={room_id}, TaskId={task_id}"
     )
 
-    url = f"https://{host}{path}?{query}"
-    session = _get_http_session()
-    if not session or session.closed:
-        session = aiohttp.ClientSession()
-        _set_http_session(session)
+    return body
 
-    async with session.post(url, headers=signed_headers, data=body_bytes) as resp:
-        result = await resp.json()
+
+async def update_voice_chat(
+    scene_id: str,
+    request_body: dict[str, Any],
+    scenes_dir: str,
+) -> dict[str, Any]:
+    """
+    代理火山 RTC UpdateVoiceChat 请求。
+
+    复用 voice_api 的签名和发送基础设施，仅处理 UpdateVoiceChat 特有的请求体构建逻辑。
+
+    支持以下指令：
+    - interrupt：打断 AI 说话
+    - function：回传工具执行结果（Function Calling）
+    - ExternalTextToSpeech：自定义语音播放（InterruptMode 必填）
+    - ExternalPromptsForLLM：动态传入上下文
+    - ExternalTextToLLM：文本提问（InterruptMode 必填）
+    - FinishSpeechRecognition：触发新一轮对话
+    - UpdateParameters：更新任务配置
+    - SetTTSContext：设置 TTS 指令标签
+    - UpdateVoicePrintSV：更新声纹降噪配置
+    - UpdateFarfieldConfig：更新远场人声抑制配置
+    """
+    _, account_config, _ = _resolve_scene(scenes_dir, scene_id)
+
+    # 从 session_id 获取运行时状态
+    session_id = request_body.get("SessionId")
+    from core.voice_server import voice_api
+
+    runtime = voice_api._runtime_state.get(session_id, {}) if session_id else {}
 
     logger.info(
-        f"[UpdateVoiceChat] 请求发送成功\n"
-        f"  command={command}\n"
-        f"  AppId={app_id}\n"
-        f"  RoomId={room_id}\n"
-        f"  TaskId={task_id}\n"
-        f"  请求体: {json.dumps(body, ensure_ascii=False)}\n"
-        f"  返回结果: {json.dumps(result, ensure_ascii=False)}"
+        f"[UpdateVoiceChat] 使用账户配置:\n"
+        f"  accessKeyId={account_config['accessKeyId']}\n"
+        f"  请求的 AppId={request_body.get('AppId')}\n"
+        f"  scene={scene_id}"
+    )
+
+    body = _build_update_voice_chat_body(request_body, session_id, runtime)
+    result = await _send_voice_request("UpdateVoiceChat", "2024-12-01", body, account_config)
+
+    logger.info(
+        f"[UpdateVoiceChat] 请求完成: "
+        f"command={body.get('Command')}, "
+        f"结果={json.dumps(result, ensure_ascii=False)[:500]}"
     )
 
     return result

@@ -140,25 +140,18 @@ def _sign_request(
     return signed_headers_dict
 
 
-# ── proxy 接口 ──────────────────────────────────────────────────────
+# ── 场景配置校验 ──────────────────────────────────────────────────────
 
 
-async def proxy_voice_api(
-    action: str,
-    version: str,
-    scene_id: str,
-    request_body: dict[str, Any],
-    scenes_dir: str,
-    http_headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """
-    代理火山 RTC AIGC OpenAPI 请求。
+def _resolve_scene(
+    scenes_dir: str, scene_id: str
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """加载并校验场景配置，返回 (json_data, account_config, voice_chat)。
 
-    对应 JS 版 /proxy 路由，根据 Action 拼装请求体并转发。
+    Raises:
+        ValueError: 场景不存在或必要配置缺失
     """
     scenes = _get_scenes(scenes_dir)
-    _assert(action, "Action 不能为空")
-    _assert(version, "Version 不能为空")
     _assert(scene_id, "SceneID 不能为空, SceneID 用于指定场景的 JSON")
 
     json_data = scenes.get(scene_id)
@@ -170,99 +163,19 @@ async def proxy_voice_api(
     _assert(account_config.get("accessKeyId"), "AccountConfig.accessKeyId 不能为空")
     _assert(account_config.get("secretKey"), "AccountConfig.secretKey 不能为空")
 
-    body: dict[str, Any] = {}
+    return json_data, account_config, voice_chat
 
-    # 从请求中提取 session_id（所有 action 都可能需要）
-    session_id = (http_headers or {}).get("session_id") or request_body.get("SessionId")
 
-    if action == "StartVoiceChat":
-        # 深拷贝避免污染缓存
-        body = copy.deepcopy(voice_chat)
+# ── 公共请求发送 ──────────────────────────────────────────────────────
 
-        # 从请求参数获取 RoomId/UserId/AppId（由前端从 getScenes 返回值传入）
-        # 多用户场景下不能依赖缓存，否则会互相覆盖
-        room_id = request_body.get("RoomId")
-        user_id = request_body.get("UserId")
-        app_id = request_body.get("AppId")
-        if room_id:
-            body["RoomId"] = room_id
-        if app_id:
-            body["AppId"] = app_id
-        if user_id:
-            agent_config = body.get("AgentConfig", {})
-            target_user_ids = agent_config.get("TargetUserId", [])
-            if target_user_ids:
-                target_user_ids[0] = user_id
-            else:
-                agent_config["TargetUserId"] = [user_id]
 
-        # 合并客户端传入的自定义参数
-        custom_llm_params = request_body.get("CustomLLMParams")
-        custom_headers = request_body.get("CustomHeaders")
-        custom_system_messages = request_body.get("CustomSystemMessages")
-
-        if custom_llm_params:
-            llm_config = body.setdefault("Config", {}).setdefault("LLMConfig", {})
-            llm_config.update(custom_llm_params)
-
-        if custom_headers:
-            llm_config = body.setdefault("Config", {}).setdefault("LLMConfig", {})
-            # 将 Authorization 写入 APIKey
-            llm_config["APIKey"] = custom_headers.get("Authorization", "")
-
-        # 将 session_id 写入 ExtraHeader，供 CustomLLM 回调时透传
-        logger.info(
-            f"[proxy:StartVoiceChat] session_id from header: {session_id}, http_headers keys: {list((http_headers or {}).keys())}"
-        )
-        if session_id:
-            extra_header = body.setdefault("Config", {}).setdefault("ExtraHeader", {})
-            extra_header["session_id"] = session_id
-
-        if custom_system_messages:
-            llm_config = body.setdefault("Config", {}).setdefault("LLMConfig", {})
-            existing = llm_config.get("SystemMessages", [])
-            llm_config["SystemMessages"] = existing + list(custom_system_messages)
-
-        logger.info(
-            f"[proxy:StartVoiceChat] AppId={body.get('AppId')}, "
-            f"RoomId={body.get('RoomId')}, "
-            f"TargetUserId={body.get('AgentConfig', {}).get('TargetUserId')}"
-        )
-        logger.info(
-            f"[proxy:StartVoiceChat] body: {json.dumps(body, ensure_ascii=False)}"
-        )
-
-    elif action == "StopVoiceChat":
-        # session_id 已在前面提取，用于查找运行时状态
-        runtime = _runtime_state.get(session_id, {}) if session_id else {}
-
-        # 优先使用前端传入的参数
-        # 其次使用运行时状态（StartVoiceChat 保存的参数）
-        # 最后 fallback 到缓存原始值
-        app_id = (
-            request_body.get("AppId")
-            or runtime.get("app_id")
-            or voice_chat.get("AppId")
-        )
-        room_id = (
-            request_body.get("RoomId")
-            or runtime.get("room_id")
-            or voice_chat.get("RoomId")
-        )
-        task_id = (
-            request_body.get("TaskId")
-            or runtime.get("task_id")
-            or voice_chat.get("TaskId")
-        )
-        _assert(app_id, "VoiceChat.AppId 不能为空")
-        _assert(room_id, "VoiceChat.RoomId 不能为空")
-        _assert(task_id, "VoiceChat.TaskId 不能为空")
-        body = {"AppId": app_id, "RoomId": room_id, "TaskId": task_id}
-        logger.info(
-            f"[proxy:StopVoiceChat] AppId={app_id}, RoomId={room_id}, TaskId={task_id}"
-        )
-
-    # 构造火山 OpenAPI 请求
+async def _send_voice_request(
+    action: str,
+    version: str,
+    body: dict[str, Any],
+    account_config: dict[str, Any],
+) -> dict[str, Any]:
+    """构造签名并发送火山 OpenAPI 请求，返回原始响应。"""
     host = "rtc.volcengineapi.com"
     path = "/"
     query = f"Action={action}&Version={version}"
@@ -290,31 +203,228 @@ async def proxy_voice_api(
         result = await resp.json()
 
     logger.info(f"[{action}] 请求结果: {json.dumps(result, ensure_ascii=False)[:500]}")
+    return result
 
-    # StartVoiceChat 成功后，保存运行时状态供 StopVoiceChat / UpdateVoiceChat 使用
-    if action == "StartVoiceChat" and result.get("Result") == "ok":
-        _app_id = body.get("AppId")
-        _room_id = body.get("RoomId")
-        _task_id = body.get("TaskId")
-        # 使用 session_id 作为 key，支持多会话并行
-        if session_id:
-            _runtime_state[session_id] = {
-                "scene_id": scene_id,
-                "app_id": _app_id,
-                "room_id": _room_id,
-                "task_id": _task_id,
-            }
-        logger.info(
-            f"[proxy:StartVoiceChat] 已保存运行时状态: "
-            f"session_id={session_id}, AppId={_app_id}, RoomId={_room_id}, TaskId={_task_id}"
-        )
-    # StopVoiceChat 成功后，清除运行时状态
-    elif action == "StopVoiceChat" and result.get("Result") == "ok":
-        if session_id and session_id in _runtime_state:
-            del _runtime_state[session_id]
-            logger.info(f"[proxy:StopVoiceChat] 已清除运行时状态: session_id={session_id}")
+
+# ── StartVoiceChat ──────────────────────────────────────────────────
+
+
+def _build_start_voice_chat_body(
+    voice_chat: dict[str, Any],
+    request_body: dict[str, Any],
+    session_id: str | None,
+    http_headers: dict[str, str] | None,
+) -> dict[str, Any]:
+    """构建 StartVoiceChat 请求体。"""
+    body = copy.deepcopy(voice_chat)
+
+    # 从请求参数获取 RoomId/UserId/AppId（由前端从 getScenes 返回值传入）
+    # 多用户场景下不能依赖缓存，否则会互相覆盖
+    room_id = request_body.get("RoomId")
+    user_id = request_body.get("UserId")
+    app_id = request_body.get("AppId")
+    if room_id:
+        body["RoomId"] = room_id
+    if app_id:
+        body["AppId"] = app_id
+    if user_id:
+        agent_config = body.get("AgentConfig", {})
+        target_user_ids = agent_config.get("TargetUserId", [])
+        if target_user_ids:
+            target_user_ids[0] = user_id
+        else:
+            agent_config["TargetUserId"] = [user_id]
+
+    # 合并客户端传入的自定义参数
+    custom_llm_params = request_body.get("CustomLLMParams")
+    custom_headers = request_body.get("CustomHeaders")
+    custom_system_messages = request_body.get("CustomSystemMessages")
+
+    if custom_llm_params:
+        llm_config = body.setdefault("Config", {}).setdefault("LLMConfig", {})
+        llm_config.update(custom_llm_params)
+
+    if custom_headers:
+        llm_config = body.setdefault("Config", {}).setdefault("LLMConfig", {})
+        # 将 Authorization 写入 APIKey
+        llm_config["APIKey"] = custom_headers.get("Authorization", "")
+
+    # 将 session_id 写入 ExtraHeader，供 CustomLLM 回调时透传
+    logger.info(
+        f"[StartVoiceChat] session_id from header: {session_id}, "
+        f"http_headers keys: {list((http_headers or {}).keys())}"
+    )
+    if session_id:
+        extra_header = body.setdefault("Config", {}).setdefault("ExtraHeader", {})
+        extra_header["session_id"] = session_id
+
+    if custom_system_messages:
+        llm_config = body.setdefault("Config", {}).setdefault("LLMConfig", {})
+        existing = llm_config.get("SystemMessages", [])
+        llm_config["SystemMessages"] = existing + list(custom_system_messages)
+
+    logger.info(
+        f"[StartVoiceChat] AppId={body.get('AppId')}, "
+        f"RoomId={body.get('RoomId')}, "
+        f"TargetUserId={body.get('AgentConfig', {}).get('TargetUserId')}"
+    )
+    logger.info(f"[StartVoiceChat] body: {json.dumps(body, ensure_ascii=False)}")
+
+    return body
+
+
+def _handle_start_voice_chat_result(
+    result: dict[str, Any],
+    body: dict[str, Any],
+    session_id: str | None,
+    scene_id: str,
+) -> None:
+    """处理 StartVoiceChat 响应：成功时保存运行时状态。"""
+    if result.get("Result") != "ok":
+        return
+
+    _app_id = body.get("AppId")
+    _room_id = body.get("RoomId")
+    _task_id = body.get("TaskId")
+    if session_id:
+        _runtime_state[session_id] = {
+            "scene_id": scene_id,
+            "app_id": _app_id,
+            "room_id": _room_id,
+            "task_id": _task_id,
+        }
+    logger.info(
+        f"[StartVoiceChat] 已保存运行时状态: "
+        f"session_id={session_id}, AppId={_app_id}, RoomId={_room_id}, TaskId={_task_id}"
+    )
+
+
+async def start_voice_chat(
+    version: str,
+    scene_id: str,
+    request_body: dict[str, Any],
+    scenes_dir: str,
+    http_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """开启语音聊天。"""
+    _, account_config, voice_chat = _resolve_scene(scenes_dir, scene_id)
+    session_id = (http_headers or {}).get("session_id") or request_body.get("SessionId")
+
+    body = _build_start_voice_chat_body(voice_chat, request_body, session_id, http_headers)
+    result = await _send_voice_request("StartVoiceChat", version, body, account_config)
+    _handle_start_voice_chat_result(result, body, session_id, scene_id)
 
     return result
+
+
+# ── StopVoiceChat ──────────────────────────────────────────────────
+
+
+def _build_stop_voice_chat_body(
+    voice_chat: dict[str, Any],
+    request_body: dict[str, Any],
+    session_id: str | None,
+) -> dict[str, Any]:
+    """构建 StopVoiceChat 请求体。"""
+    runtime = _runtime_state.get(session_id, {}) if session_id else {}
+
+    # 优先使用前端传入的参数
+    # 其次使用运行时状态（StartVoiceChat 保存的参数）
+    # 最后 fallback 到缓存原始值
+    app_id = (
+        request_body.get("AppId")
+        or runtime.get("app_id")
+        or voice_chat.get("AppId")
+    )
+    room_id = (
+        request_body.get("RoomId")
+        or runtime.get("room_id")
+        or voice_chat.get("RoomId")
+    )
+    task_id = (
+        request_body.get("TaskId")
+        or runtime.get("task_id")
+        or voice_chat.get("TaskId")
+    )
+    _assert(app_id, "VoiceChat.AppId 不能为空")
+    _assert(room_id, "VoiceChat.RoomId 不能为空")
+    _assert(task_id, "VoiceChat.TaskId 不能为空")
+
+    logger.info(
+        f"[StopVoiceChat] AppId={app_id}, RoomId={room_id}, "
+        f"TaskId={task_id}, SessionId={session_id}"
+    )
+    return {"AppId": app_id, "RoomId": room_id, "TaskId": task_id}
+
+
+def _handle_stop_voice_chat_result(
+    result: dict[str, Any],
+    session_id: str | None,
+) -> None:
+    """处理 StopVoiceChat 响应：成功时清除运行时状态。"""
+    if result.get("Result") != "ok":
+        return
+
+    if session_id and session_id in _runtime_state:
+        del _runtime_state[session_id]
+        logger.info(f"[StopVoiceChat] 已清除运行时状态: session_id={session_id}")
+
+
+async def stop_voice_chat(
+    version: str,
+    scene_id: str,
+    request_body: dict[str, Any],
+    scenes_dir: str,
+    http_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """关闭语音聊天。"""
+    _, account_config, voice_chat = _resolve_scene(scenes_dir, scene_id)
+    session_id = (http_headers or {}).get("session_id") or request_body.get("SessionId")
+
+    body = _build_stop_voice_chat_body(voice_chat, request_body, session_id)
+    result = await _send_voice_request("StopVoiceChat", version, body, account_config)
+    _handle_stop_voice_chat_result(result, session_id)
+    
+    return result
+
+
+# ── proxy 统一入口 ──────────────────────────────────────────────────
+
+
+async def proxy_voice_api(
+    action: str,
+    version: str,
+    scene_id: str,
+    request_body: dict[str, Any],
+    scenes_dir: str,
+    http_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """
+    代理火山 RTC AIGC OpenAPI 请求。
+
+    根据 Action 分发到对应的处理函数，对外保持统一入口。
+    """
+    _assert(action, "Action 不能为空")
+    _assert(version, "Version 不能为空")
+
+    if action == "StartVoiceChat":
+        return await start_voice_chat(
+            version=version,
+            scene_id=scene_id,
+            request_body=request_body,
+            scenes_dir=scenes_dir,
+            http_headers=http_headers,
+        )
+    elif action == "StopVoiceChat":
+        return await stop_voice_chat(
+            version=version,
+            scene_id=scene_id,
+            request_body=request_body,
+            scenes_dir=scenes_dir,
+            http_headers=http_headers,
+        )
+    else:
+        raise ValueError(f"不支持的操作: {action}")
 
 
 # ── getScenes 接口 ──────────────────────────────────────────────────
