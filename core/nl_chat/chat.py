@@ -209,8 +209,10 @@ class ChatAgent:
 
     async def chat_stream(
         self,
+        *,
         model: str,
         session_id: str,
+        user_id: int,
         question: str,
     ) -> AsyncGenerator[str, None]:
         """使用 Agent 进行流式对话
@@ -230,7 +232,7 @@ class ChatAgent:
         try:
             memory_start = time.perf_counter()
             memory_results = await self.memory_client.search(
-                query=question, user_id=session_id, top_k=5
+                query=question, user_id=str(user_id), top_k=5
             )
             memory_time = time.perf_counter() - memory_start
 
@@ -342,7 +344,9 @@ class ChatAgent:
                         )
                         if skill_name and skill_name not in used_skills:
                             used_skills.add(skill_name)
-                            logger.info(f"{_CYAN}{_BOLD}🎯 使用技能: {skill_name}{_RESET}")
+                            logger.info(
+                                f"{_CYAN}{_BOLD}🎯 使用技能: {skill_name}{_RESET}"
+                            )
                             # 即时推送"正在处理"提示
                             hint = _skill_hint(skill_name)
                             if hint:
@@ -410,7 +414,9 @@ class ChatAgent:
         except GraphRecursionError:
             logger.warning(f"Agent 递归次数超限 (session: {session_id})，返回已有内容")
             # 推送提示消息
-            fallback_msg = "\n抱歉，处理过程过于复杂，我暂时无法完成这个请求，请简化问题后重试。"
+            fallback_msg = (
+                "\n抱歉，处理过程过于复杂，我暂时无法完成这个请求，请简化问题后重试。"
+            )
             fallback_chunk = {
                 "id": completion_id,
                 "object": "chat.completion.chunk",
@@ -451,6 +457,7 @@ class ChatAgent:
                     question=question,
                     response=full_response_content,
                     session_id=session_id,
+                    user_id=user_id,
                 )
             )
 
@@ -466,6 +473,7 @@ class ChatAgent:
         question: str,
         response: str,
         session_id: str,
+        user_id: int,
     ) -> None:
         """异步保存记忆（后台任务）
 
@@ -473,6 +481,7 @@ class ChatAgent:
             question: 用户问题
             response: 模型回复
             session_id: 会话ID
+            user_id: 用户ID
         """
         try:
             logger.info(f"开始异步保存记忆 - session: {session_id}")
@@ -484,7 +493,7 @@ class ChatAgent:
 
             result = await self.memory_client.add(
                 messages=messages,
-                user_id=session_id,
+                user_id=str(user_id),
                 session_id=session_id,
                 infer=True,
                 auto_detect_conflict=True,

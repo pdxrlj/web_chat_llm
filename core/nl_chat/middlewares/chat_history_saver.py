@@ -41,20 +41,24 @@ class ChatHistorySaverMiddleware(AgentMiddleware):
             logger.warning(f"未找到用户消息，跳过保存聊天记录 (session: {session_id})")
             return None
 
+        # count=1 时 get_latest_human_message 返回 str | None
+        question_str = user_question if isinstance(user_question, str) else "\n".join(user_question)
+
         # 获取角色名称
         role = get_role_name(session_id)
 
-        try:
-            asyncio.create_task(
-                add_chat_history(
+        async def _save():
+            try:
+                await add_chat_history(
                     session_id=session_id,
                     role=role,
-                    query=user_question,
+                    query=question_str,
                     answer=ai_answer or "",
                 )
-            )
-            logger.info(f"💾 聊天记录已保存 (session: {session_id})")
-        except Exception as e:
-            logger.warning(f"保存聊天记录失败 (session: {session_id}): {e}")
+                logger.info(f"💾 聊天记录已保存 (session: {session_id})")
+            except Exception as e:
+                logger.warning(f"保存聊天记录失败 (session: {session_id}): {e}")
+
+        asyncio.create_task(_save())
 
         return None

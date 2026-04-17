@@ -91,7 +91,6 @@ embedding:
   - name: local_embedding
     model: BAAI/bge-small-zh-v1.5
     model_provider: sentence_transformers
-    # 中文embedding模型，维度512
 
   - name: reranker
     model: BAAI/bge-reranker-v2-m3

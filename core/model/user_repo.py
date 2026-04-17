@@ -4,6 +4,12 @@ from core.model.base import get_session
 from core.model.user import UserModel, UserSessionModel
 
 
+# ---------------------------------------------------------------------------
+# session_id → user_id 简易内存缓存
+# ---------------------------------------------------------------------------
+_session_user_cache: dict[str, int] = {}
+
+
 async def create_user(username: str, password: str) -> UserModel:
     """
     创建新用户。
@@ -24,23 +30,31 @@ async def create_user(username: str, password: str) -> UserModel:
     raise RuntimeError("无法获取数据库会话")
 
 
-async def get_user_by_session_id(session_id: str) -> UserModel | None:
+async def get_user_by_session_id(session_id: str) -> int | None:
     """
-    根据会话ID获取用户（从 user_sessions 关联表查找）。
+    根据会话ID获取用户ID（带内存缓存）。
 
     Args:
         session_id: 会话ID
 
     Returns:
-        UserModel | None: 用户对象，不存在则返回 None
+        int | None: 用户ID，不存在则返回 None
     """
+    # 先查缓存
+    cached = _session_user_cache.get(session_id)
+    if cached is not None:
+        return cached
+
     async for session in get_session():
         result = await session.execute(
-            select(UserModel)
+            select(UserModel.id)
             .join(UserSessionModel, UserSessionModel.user_id == UserModel.id)
             .where(UserSessionModel.session_id == session_id)
         )
-        return result.scalar_one_or_none()
+        user_id = result.scalar_one_or_none()
+        if user_id is not None:
+            _session_user_cache[session_id] = user_id
+        return user_id
     raise RuntimeError("无法获取数据库会话")
 
 
@@ -151,5 +165,8 @@ async def add_user_session_id(username: str, session_id: str) -> bool:
         new_session = UserSessionModel(user_id=user.id, session_id=session_id)
         session.add(new_session)
         await session.commit()
+
+        # 更新缓存
+        _session_user_cache[session_id] = user.id
         return True
     raise RuntimeError("无法获取数据库会话")

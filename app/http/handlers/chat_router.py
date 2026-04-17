@@ -4,6 +4,7 @@ from app.http.handlers.base import router
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 from app.http.response import NlResponse
+from core.model.user_repo import get_user_by_session_id
 from core.nl_chat.chat import ChatAgent
 from core.helper.bprint import log_table
 
@@ -37,19 +38,31 @@ async def chat(request: Request, nl_request: NLAIChatRequest):
     for key, value in request.headers.items():
         logger.info(f"[/chat/completions] Request header - {key}: {value}")
 
-    session_id = request.headers.get("session_id")
+    authorization = request.headers.get("authorization", "")
+    if authorization.startswith("Bearer "):
+        session_id = authorization[len("Bearer ") :]
+    else:
+        session_id = authorization
 
     if not session_id:
-        authorization = request.headers.get("authorization", "")
-        if authorization.startswith("Bearer "):
-            session_id = authorization[len("Bearer ") :]
-        else:
-            session_id = authorization
-
-    if not session_id:
+        logger.warning("[/chat/completions] session_id 和 authorization 均为空")
         return NlResponse(
             content={},
             message="session_id is required in header",
+            status_code=400,
+        )
+
+    logger.info(f"[/chat/completions] 解析到 session_id: {session_id}")
+
+    # 通过session_id 获取 user_id
+    user_id = await get_user_by_session_id(session_id)
+    if user_id is None:
+        logger.warning(
+            f"[/chat/completions] session_id 无效，未找到对应用户: {session_id}"
+        )
+        return NlResponse(
+            content={},
+            message="session_id is invalid",
             status_code=400,
         )
 
@@ -67,6 +80,7 @@ async def chat(request: Request, nl_request: NLAIChatRequest):
 
     # 从消息中提取用户问题（最后一条消息）
     if not nl_request.messages:
+        logger.warning(f"[/chat/completions] messages 为空, session_id: {session_id}")
         return NlResponse(
             content={},
             message="messages is required",
@@ -82,6 +96,7 @@ async def chat(request: Request, nl_request: NLAIChatRequest):
         agent.chat_stream(
             model=nl_request.model,
             session_id=session_id,
+            user_id=user_id,
             question=question,
         ),
         media_type="text/event-stream",

@@ -63,19 +63,27 @@ def extract_message_content(msg: AnyMessage) -> str:
     return str(msg.content)
 
 
-def get_latest_human_message(messages: list[AnyMessage]) -> str | None:
-    """从消息列表中获取最新的一条用户消息文本。
+def get_latest_human_message(messages: list[AnyMessage], count: int = 1) -> str | list[str] | None:
+    """从消息列表中获取最近的用户消息文本。
 
     Args:
         messages: 消息列表
+        count: 获取消息条数，默认 1 条
 
     Returns:
-        str | None: 用户消息文本，未找到返回 None
+        count=1 时返回 str | None（兼容旧调用）；count>1 时返回 list[str]，按时间从新到旧排列
     """
+    result: list[str] = []
     for msg in reversed(messages):
         if isinstance(msg, HumanMessage):
-            return extract_message_content(msg)
-    return None
+            result.append(extract_message_content(msg))
+            if len(result) >= count:
+                break
+    if not result:
+        return None
+    if count == 1:
+        return result[0]
+    return result
 
 
 def get_latest_ai_message(messages: list[AnyMessage]) -> str | None:

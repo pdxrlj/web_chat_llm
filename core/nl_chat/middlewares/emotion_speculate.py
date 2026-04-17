@@ -34,7 +34,7 @@ EMOTION_ANALYSIS_PROMPT = """/nothink 你是一个专业的情绪分析师。请
 分析要求：
 1. 识别用户当前的主要情绪（如：平静、焦虑、开心、沮丧、愤怒等）
 2. 判断是否需要预警（如：负面情绪严重、需要关注等）
-3. 给出情绪健康分数（0-1，越高表示情绪状态越好）
+3. 给出情绪健康分数0到1,越高表示情绪状态越好
 4. 分析原因并提供相关对话片段
 5. 给出适当的建议
 
@@ -140,7 +140,9 @@ class EmotionSpeculateMiddleware(AgentMiddleware):
         session_id = state.get("session_id", "unknown")
         logger.info(f"[开始处理会话: {session_id}]")
         messages = state.get("messages", [])
-        user_question = get_latest_human_message(messages)
+        user_question = get_latest_human_message(messages, 3)
+        if isinstance(user_question, list):
+            user_question = "\n".join(user_question)
 
         if user_question is None:
             logger.warning("未找到用户消息")

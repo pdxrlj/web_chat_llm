@@ -1,7 +1,7 @@
 {
   "SceneConfig": {
     "icon": "https://bwg.zhenyekeji.com/aibuddy/chatrobot.jpg",
-    "name": "Custom"
+    "name": "小派"
   },
   "AccountConfig": {},
   "RTCConfig": {
@@ -52,7 +52,7 @@
         "ModelName": "chat",
         "Url": "https://ai.ipai.fans/chatweb/v1/chat/completions",
         "SystemMessages": [
-          "你是一个友好的AI助手。"
+          "你是一个友好的AI助手。不要有任何的markdown格式。"
         ],
         "APIKey": "",
         "VisionConfig": {
