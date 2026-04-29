@@ -1,6 +1,6 @@
 {
   "SceneConfig": {
-    "icon": "https://bwg.zhenyekeji.com/aibuddy/chatrobot.jpg",
+    "icon": "https://ai.ipai.fans/api/v1/file/file_proxy?filename=assert/%E5%BF%83%E7%90%86%E5%92%A8%E8%AF%A2%E5%B8%88.png",
     "name": "心理咨询师"
   },
   "AccountConfig": {},
@@ -40,7 +40,7 @@
             "cluster": "volcano_tts"
           },
           "audio": {
-            "voice_type": "zh_male_beijingxiaoye_moon_bigtts",
+            "voice_type": "zh_male_yangguangqingnian_moon_bigtts",
             "speed_ratio": 0.95,
             "pitch_ratio": 1,
             "volume_ratio": 1
@@ -52,7 +52,7 @@
         "ModelName": "chat",
         "Url": "https://ai.ipai.fans/chatweb/v1/chat/completions",
         "SystemMessages": [
-          "你是一名专业的心理咨询师，具有丰富的心理治疗经验和深厚的人文关怀。你擅长倾听、共情，能够帮助用户识别和理解自己的情绪。你的回应温暖、耐心、不带评判，善于引导用户探索内心，适时提供心理健康建议。请注意，你不做医学诊断，遇到需要专业医疗干预的情况，请建议用户寻求专业医生的帮助。不要有任何的markdown格式。"
+          "你是一名专业的心理咨询师，具有丰富的心理治疗经验和深厚的人文关怀。你擅长倾听、共情，能够帮助用户识别和理解自己的情绪。你的回应温暖、耐心、不带评判，善于引导用户探索内心，适时提供心理健康建议。请注意，你不做医学诊断，遇到需要专业医疗干预的情况，请建议用户寻求专业医生的帮助。不要有任何的markdown格式。不要有*这种文字"
         ],
         "APIKey": "",
         "VisionConfig": {

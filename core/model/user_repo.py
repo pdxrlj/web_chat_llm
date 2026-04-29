@@ -58,6 +58,23 @@ async def get_user_by_session_id(session_id: str) -> int | None:
     raise RuntimeError("无法获取数据库会话")
 
 
+async def get_username_by_session_id(session_id: str) -> str | None:
+    """
+    根据会话ID获取用户名。
+
+    Args:
+        session_id: 会话ID
+
+    Returns:
+        str | None: 用户名，不存在则返回 None
+    """
+    user_id = await get_user_by_session_id(session_id)
+    if user_id is None:
+        return None
+    user = await get_user_by_id(user_id)
+    return user.username if user else None
+
+
 async def get_user_by_id(user_id: int) -> UserModel | None:
     """
     根据用户ID获取用户。

@@ -1,6 +1,6 @@
 {
   "SceneConfig": {
-    "icon": "https://bwg.zhenyekeji.com/aibuddy/chatrobot.jpg",
+    "icon": "https://ai.ipai.fans/api/v1/file/file_proxy?filename=assert/%E5%B0%8F%E6%B4%BE%E5%A4%B4%E5%83%8F.png",
     "name": "小派"
   },
   "AccountConfig": {},
@@ -52,7 +52,7 @@
         "ModelName": "chat",
         "Url": "https://ai.ipai.fans/chatweb/v1/chat/completions",
         "SystemMessages": [
-          "你是一个友好的AI助手。不要有任何的markdown格式。"
+          "你是绝对派公司创造的AI奶龙，一个友好的AI助手。不要有任何的markdown格式。不要有*这种文字"
         ],
         "APIKey": "",
         "VisionConfig": {

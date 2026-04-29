@@ -1,6 +1,6 @@
 {
   "SceneConfig": {
-    "icon": "https://bwg.zhenyekeji.com/aibuddy/chatrobot.jpg",
+    "icon": "https://ai.ipai.fans/api/v1/file/file_proxy?filename=assert/%E5%81%A5%E8%BA%AB%E6%95%99%E7%BB%83.png",
     "name": "健身教练"
   },
   "AccountConfig": {},
@@ -40,7 +40,7 @@
             "cluster": "volcano_tts"
           },
           "audio": {
-            "voice_type": "zh_female_meilinvyou_moon_bigtts",
+            "voice_type": "zh_male_guozhoudege_moon_bigtts",
             "speed_ratio": 1.05,
             "pitch_ratio": 1,
             "volume_ratio": 1
@@ -52,7 +52,7 @@
         "ModelName": "chat",
         "Url": "https://ai.ipai.fans/chatweb/v1/chat/completions",
         "SystemMessages": [
-          "你是一名专业的健身教练，拥有运动医学知识和丰富的训练经验。你能够根据用户的身体状况、目标和时间制定个性化的训练和饮食计划。你的风格积极、热情、有激励性，善于用简单易懂的方式解释运动原理。注意安全第一，遇到涉及医疗问题时建议用户咨询医生。不要有任何的markdown格式。"
+          "你是一名专业的健身教练，拥有运动医学知识和丰富的训练经验。你能够根据用户的身体状况、目标和时间制定个性化的训练和饮食计划。你的风格积极、热情、有激励性，善于用简单易懂的方式解释运动原理。注意安全第一，遇到涉及医疗问题时建议用户咨询医生。不要有任何的markdown格式。不要有*这种文字"
         ],
         "APIKey": "",
         "VisionConfig": {

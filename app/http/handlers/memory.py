@@ -1,4 +1,8 @@
-"""记忆报告接口：根据 session_id 获取用户记忆，使用 LLM 生成分析报告。"""
+"""记忆报告接口：根据 session_id 获取用户记忆数据。"""
+
+import json
+
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.http.handlers.base import router
 from app.http.response import NlResponse
@@ -10,18 +14,37 @@ from fastapi import Request
 
 logger = setup_logger("memory_handler")
 
-_REPORT_PROMPT = """你是一位专业的用户画像分析师。请根据以下用户记忆数据，生成一份简洁、真实的用户分析报告。
+_MEMORY_REPORT_PROMPT = """你是一位专业的用户画像分析师，请根据用户记忆数据，分析并生成一份结构化报告。
 
-要求：
-1. 基于记忆内容客观分析，不要编造没有依据的结论
-2. 报告内容精简，不超过 200 字
-3. 从兴趣偏好、性格特征、沟通风格等维度总结
-4. 如果记忆数据不足，如实说明，不要强行推测
-5. 输出文本格式，不要包含任何 Markdown 语法，也不要包含任何 HTML 标签，只输出普通文本。
+## 输出格式
 
-用户记忆数据：
-{memories}
-"""
+严格输出以下JSON格式，不要输出任何其他内容：
+```json
+{
+  "basic_info": ["要点1", "要点2"],
+  "attention_needed": ["要点1", "要点2"],
+  "current_status": ["要点1", "要点2"],
+  "recent_events": ["要点1", "要点2"],
+  "preferences": ["要点1", "要点2"],
+  "current_demands": ["要点1", "要点2"]
+}
+```
+
+## 字段说明
+
+- basic_info：基础信息，提取用户的基本身份信息，如名字、年龄、性别、职业、所在城市等
+- attention_needed：需关注内容，识别需要优先关注的重要信息，包括安全风险、心理危机、紧急需求等；如果检测到危险信号（如自伤、暴力倾向等），必须置顶标注
+- current_status：当前状态，推断用户当前的生理和心理状态，如情绪、身体状况、能量水平等
+- recent_events：近期事件，梳理用户近期经历的重要事件，按时间或重要性排列
+- preferences：偏好与关注，归纳用户的兴趣爱好、饮食偏好、关注的话题等
+- current_demands：当前诉求，总结用户当前明确表达或隐含的需求和愿望
+
+## 输出规则
+1. 内容必须基于记忆数据，不得编造
+2. 每条要点简洁明了，不超过20字
+3. 各模块之间不要重复相同内容
+4. 如果某个模块没有相关信息，填写空数组 []
+5. 只输出JSON，不要输出任何额外文字"""
 
 
 @router.get("/memory/report")
@@ -33,7 +56,7 @@ async def get_memory_report(request: Request):
     if not session_id:
         authorization = request.headers.get("authorization", "")
         if authorization.startswith("Bearer "):
-            session_id = authorization[len("Bearer "):]
+            session_id = authorization[len("Bearer ") :]
         else:
             session_id = authorization
 
@@ -66,40 +89,60 @@ async def get_memory_report(request: Request):
                 }
             )
 
-        # 拼接记忆内容
-        memory_texts = [
-            f"- [{m.get('memory_type', 'unknown')}] {m.get('content', '')}"
-            for m in memories
-        ]
-        memories_str = "\n".join(memory_texts)
+        # 提取记忆内容用于生成报告
+        memory_texts = []
+        for m in memories:
+            content = m.get("content", "")
+            memory_type = m.get("memory_type", "unknown")
+            memory_texts.append(f"[{memory_type}] {content}")
 
-        # 使用 memory 模型生成报告
+        memories_summary = "\n".join(memory_texts)
+
+        # 调用大模型生成分析报告
         llm = build_llm_from_config("memory", temperature=0.3)
-        prompt = _REPORT_PROMPT.format(memories=memories_str)
-        response = await llm.ainvoke(prompt)
-
-        raw_content = (
-            response.content if hasattr(response, "content") else str(response)
-        )
-        if isinstance(raw_content, list):
-            report_text = " ".join(
-                part.get("text", "")
-                for part in raw_content
-                if isinstance(part, dict) and part.get("type") == "text"
+        messages = [
+            SystemMessage(content=_MEMORY_REPORT_PROMPT),
+            HumanMessage(content=f"以下是用户的记忆数据：\n\n{memories_summary}"),
+        ]
+        report_result = await llm.ainvoke(messages)
+        report_text = report_result.content
+        if isinstance(report_text, list):
+            report_text = "\n".join(
+                (
+                    str(item)
+                    if isinstance(item, str)
+                    else json.dumps(item, ensure_ascii=False)
+                )
+                for item in report_text
             )
-        else:
-            report_text = str(raw_content).strip()
 
-        logger.info(
-            f"[memory/report] 报告生成成功, session: {session_id}, 记忆数: {len(memories)}"
-        )
+        # 解析大模型返回的 JSON
+        try:
+            # 尝试提取 JSON 内容（兼容 markdown 代码块包裹）
+            json_str = report_text
+            if "```json" in json_str:
+                json_str = json_str.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in json_str:
+                json_str = json_str.split("```", 1)[1].split("```", 1)[0]
+            report_data = json.loads(json_str.strip())
+        except (json.JSONDecodeError, IndexError) as e:
+            logger.warning(f"[memory/report] JSON 解析失败，返回原始文本: {e}")
+            report_data = {
+                "basic_info": [],
+                "attention_needed": [],
+                "current_status": [],
+                "recent_events": [],
+                "preferences": [],
+                "current_demands": [],
+                "raw_text": report_text,
+            }
 
         return NlResponse.success(
-            content={"report": report_text, "memory_count": len(memories)}
+            content={"report": report_data, "memory_count": len(memories)}
         )
 
     except Exception as e:
-        logger.error(f"[memory/report] 生成报告失败: {e}", exc_info=True)
+        logger.error(f"[memory/report] 获取记忆失败: {e}", exc_info=True)
         return NlResponse.fail(
-            content={}, message=f"生成报告失败: {e}", status_code=500
+            content={}, message=f"获取记忆失败: {e}", status_code=500
         )

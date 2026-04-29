@@ -7,6 +7,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage
 from pydantic import Field, BaseModel
 from core.model.topic_repo import save_chat_topic
+from core.model.user_repo import get_username_by_session_id
 from core.nl_chat.middlewares.common import message_bus, build_llm_from_config
 from core.logger import setup_logger
 
@@ -115,7 +116,7 @@ class ChatTopicMiddleware(AgentMiddleware):
 
             await save_chat_topic(
                 session_id=session_id,
-                username=session_id,
+                username=await get_username_by_session_id(session_id) or session_id,
                 title=response.topic,
                 description=response.description,
             )

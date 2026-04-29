@@ -18,8 +18,16 @@ _voice_type_mgr: dict[str, dict[str, Union[str, float]]] = {}
 
 
 def get_session_prompt(session_id: str) -> str:
-    """根据 session_id 获取对应的 system prompt"""
-    return _prompt_mgr.get(session_id, _prompt_mgr["default"])
+    """根据 session_id 获取对应的 system prompt
+
+    如果该 session 有专属提示词，则在默认提示词基础上追加专属提示词；
+    如果没有，则返回默认提示词。
+    """
+    custom_prompt = _prompt_mgr.get(session_id)
+    if custom_prompt is None:
+        return _prompt_mgr["default"]
+    # 专属提示词拼接在默认提示词之后
+    return f"{_prompt_mgr['default']}\n\n{custom_prompt}"
 
 
 def set_session_prompt(
